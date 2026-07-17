@@ -1,0 +1,44 @@
+[project]
+name = "rag-agent"
+version = "0.1.0"
+description = "用于学习 Agentic RAG 核心实现的后端项目"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "fastapi>=0.121",
+    "pydantic-settings>=2.10",
+    "uvicorn[standard]>=0.34.2",
+]
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.400",
+    "ruff>=0.12.1",
+]
+test = [
+    "httpx>=0.28",
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+addopts = "-v --tb=short"
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "unit: 不访问真实外部服务的单元测试",
+    "integration: 访问真实基础设施的集成测试",
+    "e2e: 覆盖完整业务链路的端到端测试",
+    "external: 依赖真实外部模型或解析服务的测试",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+include = ["app", "tests"]
