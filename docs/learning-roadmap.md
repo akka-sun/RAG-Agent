@@ -272,6 +272,7 @@
 | 日期 | 阶段 | 完成内容 | 测试证据 | 已掌握 | 待复习 |
 |---|---|---|---|---|---|
 | 2026-07-17 | 需求设计 | 确认最终架构和教学方式 | 设计评审通过 | 项目边界 | 待开始阶段 0 |
+| 2026-07-18 | 阶段 0 | 容器化骨架、强类型配置、FastAPI 应用与存活检查 | pytest 3 passed、Ruff 通过、Pyright 0 errors、真实 HTTP 返回 status=ok、容器 healthy | Docker Compose、Pydantic Settings、FastAPI 路由、配置缓存与测试隔离 | async 的适用条件、live 与 ready 的边界、TestClient 与真实 HTTP 的测试分层 |
 
 ## 5. 当前任务
 
