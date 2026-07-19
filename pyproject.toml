@@ -28,6 +28,7 @@ test = [
 addopts = "-v --tb=short"
 testpaths = ["tests"]
 pythonpath = ["."]
+asyncio_mode = "auto"
 markers = [
     "unit: 不访问真实外部服务的单元测试",
     "integration: 访问真实基础设施的集成测试",
