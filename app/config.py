@@ -2,6 +2,7 @@ from functools import lru_cache
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy import URL
 
 
 class Settings(BaseSettings):
@@ -13,6 +14,30 @@ class Settings(BaseSettings):
     app_env: Literal["development", "test", "production"] = "development"
     debug: bool = False
     api_v1_prefix: str = "/api/v1"
+    postgres_user: str = "rag_agent"
+    postgres_password: str = "rag_agent"
+    postgres_host: str = "postgres"
+    postgres_port: int = 5432
+    postgres_db: str = "rag_agent"
+    postgres_test_db: str = "rag_agent_test"
+
+    @property
+    def database_url(self) -> URL:
+        return self._build_database_url(self.postgres_db)
+
+    @property
+    def test_database_url(self) -> URL:
+        return self._build_database_url(self.postgres_test_db)
+
+    def _build_database_url(self, database: str) -> URL:
+        return URL.create(
+            drivername="postgresql+asyncpg",
+            username=self.postgres_user,
+            password=self.postgres_password,
+            host=self.postgres_host,
+            port=self.postgres_port,
+            database=database,
+        )
 
 
 @lru_cache

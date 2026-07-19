@@ -5,8 +5,11 @@ description = "用于学习 Agentic RAG 核心实现的后端项目"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [
+    "alembic>=1.18.5",
+    "asyncpg>=0.30",
     "fastapi>=0.121",
     "pydantic-settings>=2.10",
+    "sqlalchemy[asyncio]>=2.0.51",
     "uvicorn[standard]>=0.34.2",
 ]
 
@@ -18,6 +21,7 @@ dev = [
 test = [
     "httpx>=0.28",
     "pytest>=8.0",
+    "pytest-asyncio>=1.0",
 ]
 
 [tool.pytest.ini_options]
