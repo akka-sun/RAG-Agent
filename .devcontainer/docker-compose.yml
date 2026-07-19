@@ -1,4 +1,8 @@
 services:
   api:
     volumes:
-      - .:/workspace
+      - .:/app
+      - dev_venv:/app/.venv
+
+volumes:
+  dev_venv:

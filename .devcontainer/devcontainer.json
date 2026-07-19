@@ -5,7 +5,7 @@
     "docker-compose.yml"
   ],
   "service": "api",
-  "workspaceFolder": "/workspace",
+  "workspaceFolder": "/app",
   "shutdownAction": "stopCompose",
   "overrideCommand": false,
   "customizations": {
