@@ -273,7 +273,8 @@
 |---|---|---|---|---|---|
 | 2026-07-17 | 需求设计 | 确认最终架构和教学方式 | 设计评审通过 | 项目边界 | 待开始阶段 0 |
 | 2026-07-18 | 阶段 0 | 容器化骨架、强类型配置、FastAPI 应用与存活检查 | pytest 3 passed、Ruff 通过、Pyright 0 errors、真实 HTTP 返回 status=ok、容器 healthy | Docker Compose、Pydantic Settings、FastAPI 路由、配置缓存与测试隔离 | async 的适用条件、live 与 ready 的边界、TestClient 与真实 HTTP 的测试分层 |
+| 2026-07-20 | 阶段 1 | PostgreSQL、异步 ORM、Alembic、知识库 CRUD、统一错误响应 | 空库迁移至唯一 head、10 个单元测试和 5 个集成测试通过、Ruff 与 Pyright 通过、真实 HTTP CRUD 返回 201/200/200/204 | flush、commit、rollback、refresh 与 Service 事务边界 | 完整请求链路、Route/Service/Repository 职责、Engine/连接池/Connection/Session、并发唯一约束、Alembic 与 create_all、单元与集成测试分层 |
 
 ## 5. 当前任务
 
-下一步进入阶段 0，但在编写业务代码前先创建详细实施计划。第一个编码任务应保持足够小：建立项目元数据、最小配置类、FastAPI 应用和健康检查，并在 Docker 中通过测试。
+下一步进入阶段 2：实现基于少量 Markdown/TXT 的进程内最小 RAG，先明确分块、Embedding、相似度检索和确定性测试的设计与验收标准。
