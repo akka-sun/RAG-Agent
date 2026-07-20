@@ -9,5 +9,5 @@ class ErrorDetail(BaseModel):
     details: Any | None = None
 
 
-class ErrirResponse(BaseModel):
+class ErrorResponse(BaseModel):
     error: ErrorDetail

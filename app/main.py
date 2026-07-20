@@ -2,6 +2,8 @@ from typing import Literal, TypedDict
 
 from fastapi import APIRouter, FastAPI
 
+from app.api.errors import register_error_handlers
+from app.api.routes.knowledge_bases import router as knowledge_bases_router
 from app.config import get_settings
 
 
@@ -23,7 +25,10 @@ def create_app() -> FastAPI:
     async def live_health() -> HealthResponse:  # pyright: ignore[reportUnusedFunction]
         return {"status": "ok"}
 
+    router.include_router(knowledge_bases_router)
     application.include_router(router)
+    register_error_handlers(application)
+
     return application
 
 
