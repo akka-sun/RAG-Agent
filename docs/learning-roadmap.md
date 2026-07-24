@@ -274,7 +274,8 @@
 | 2026-07-17 | 需求设计 | 确认最终架构和教学方式 | 设计评审通过 | 项目边界 | 待开始阶段 0 |
 | 2026-07-18 | 阶段 0 | 容器化骨架、强类型配置、FastAPI 应用与存活检查 | pytest 3 passed、Ruff 通过、Pyright 0 errors、真实 HTTP 返回 status=ok、容器 healthy | Docker Compose、Pydantic Settings、FastAPI 路由、配置缓存与测试隔离 | async 的适用条件、live 与 ready 的边界、TestClient 与真实 HTTP 的测试分层 |
 | 2026-07-20 | 阶段 1 | PostgreSQL、异步 ORM、Alembic、知识库 CRUD、统一错误响应 | 空库迁移至唯一 head、10 个单元测试和 5 个集成测试通过、Ruff 与 Pyright 通过、真实 HTTP CRUD 返回 201/200/200/204 | flush、commit、rollback、refresh 与 Service 事务边界 | 完整请求链路、Route/Service/Repository 职责、Engine/连接池/Connection/Session、并发唯一约束、Alembic 与 create_all、单元与集成测试分层 |
+| 2026-07-24 | 阶段 2 | Markdown/TXT 字符分块、确定性 Hashing Embedding、余弦检索、进程内知识库隔离、引用回答与最小 RAG API | 31 个单元测试和 8 个集成测试通过、Ruff 与 Pyright 通过、真实 HTTP 创建/摄取/查询/删除返回 201/201/200/204、引用文档 ID 一致 | chunk size 与 overlap 取舍、归一化向量点积、Hashing 与语义 Embedding 的边界、召回与生成问题区分、检索前知识库隔离 | 完整摄取调用链、进程内 Store 的多进程与持久化边界、查询链路中的引用组装细节 |
 
 ## 5. 当前任务
 
-下一步进入阶段 2：实现基于少量 Markdown/TXT 的进程内最小 RAG，先明确分块、Embedding、相似度检索和确定性测试的设计与验收标准。
+下一步进入阶段 3：设计 MinIO、Redis、ARQ 和 PostgreSQL 协作的异步文档摄取链路，明确任务状态、幂等、失败重试和跨存储补偿边界。
