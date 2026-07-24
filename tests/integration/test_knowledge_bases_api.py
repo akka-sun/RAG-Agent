@@ -1,30 +1,5 @@
-from collections.abc import AsyncIterator
-
 import pytest
-from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.db import get_session
-from app.main import create_app
-
-
-@pytest.fixture
-async def client(
-    db_session: AsyncSession,
-) -> AsyncIterator[AsyncClient]:
-    app = create_app()
-
-    async def override_session() -> AsyncIterator[AsyncSession]:
-        yield db_session
-
-    app.dependency_overrides[get_session] = override_session
-
-    transport = ASGITransport(app=app)
-    async with AsyncClient(
-        transport=transport,
-        base_url="http://test",
-    ) as test_client:
-        yield test_client
+from httpx import AsyncClient
 
 
 @pytest.mark.integration
