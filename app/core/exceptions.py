@@ -28,3 +28,7 @@ class IngestionQueueUnavailableError(DocumentError):
 
 class DocumentStorageUnavailableError(DocumentError):
     code = "document_storage_unavailable"
+
+
+class DocumentCleanupFailedError(DocumentError):
+    code = "document_cleanup_failed"

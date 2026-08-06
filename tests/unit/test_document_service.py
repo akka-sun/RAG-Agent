@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import dependencies
 from app.core.exceptions import (
+    DocumentCleanupFailedError,
     DocumentStorageUnavailableError,
     IngestionQueueUnavailableError,
     UnsupportedDocumentError,
@@ -133,6 +134,20 @@ async def test_cleanup_failure_preserves_original_database_error() -> None:
         await service.upload(knowledge_base_id, "readme.md", "text/markdown", b"content")
 
 
+async def test_rollback_failure_still_deletes_object_and_preserves_commit_error() -> None:
+    commit_error = RuntimeError("database unavailable")
+    session = AsyncMock(spec=AsyncSession)
+    session.commit.side_effect = commit_error
+    session.rollback.side_effect = RuntimeError("rollback unavailable")
+    service, _, storage, _, knowledge_base_id, _, _ = make_service(session=session)
+
+    with pytest.raises(RuntimeError, match="database unavailable") as error:
+        await service.upload(knowledge_base_id, "readme.md", "text/markdown", b"content")
+
+    assert error.value is commit_error
+    storage.delete.assert_awaited_once()
+
+
 async def test_queue_failure_marks_records_failed_and_preserves_source() -> None:
     queue = AsyncMock()
     queue.enqueue.side_effect = RuntimeError("redis unavailable")
@@ -150,6 +165,56 @@ async def test_queue_failure_marks_records_failed_and_preserves_source() -> None
     assert task.error == "redis unavailable"
     assert session.rollback.await_count == 1
     assert session.commit.await_count == 2
+    storage.delete.assert_not_awaited()
+
+
+async def test_job_id_commit_failure_is_recovered_without_marking_failed() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    session.commit.side_effect = [None, RuntimeError("job id commit failed"), None]
+    service, _, storage, _, knowledge_base_id, documents, tasks = make_service(session=session)
+
+    document, task = await service.upload(
+        knowledge_base_id, "readme.md", "text/markdown", b"content"
+    )
+
+    assert document.status == DocumentStatus.PENDING
+    assert task.status == TaskStatus.PENDING
+    assert task.arq_job_id == "arq-job-1"
+    assert session.commit.await_count == 3
+    session.rollback.assert_awaited_once()
+    storage.delete.assert_not_awaited()
+    assert documents.items[document.id].status == DocumentStatus.PENDING
+    assert tasks.items[task.id].status == TaskStatus.PENDING
+
+
+async def test_job_id_recovery_failure_raises_cleanup_error_from_commit_error() -> None:
+    commit_error = RuntimeError("job id commit failed")
+    session = AsyncMock(spec=AsyncSession)
+    session.commit.side_effect = [None, commit_error, RuntimeError("recovery commit failed")]
+    service, _, storage, _, knowledge_base_id, _, _ = make_service(session=session)
+
+    with pytest.raises(DocumentCleanupFailedError) as error:
+        await service.upload(knowledge_base_id, "readme.md", "text/markdown", b"content")
+
+    assert error.value.__cause__ is commit_error
+    storage.delete.assert_not_awaited()
+
+
+async def test_enqueue_failure_mark_commit_failure_raises_cleanup_error() -> None:
+    enqueue_error = RuntimeError("redis unavailable")
+    session = AsyncMock(spec=AsyncSession)
+    session.commit.side_effect = [None, RuntimeError("mark commit failed")]
+    queue = AsyncMock()
+    queue.enqueue.side_effect = enqueue_error
+    service, _, storage, _, knowledge_base_id, _, _ = make_service(
+        session=session,
+        queue=queue,
+    )
+
+    with pytest.raises(DocumentCleanupFailedError) as error:
+        await service.upload(knowledge_base_id, "readme.md", "text/markdown", b"content")
+
+    assert error.value.__cause__ is enqueue_error
     storage.delete.assert_not_awaited()
 
 
