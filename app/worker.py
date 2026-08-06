@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 from arq.connections import RedisSettings
 from minio import Minio
 from redis import Redis
@@ -20,7 +22,7 @@ async def health_job(ctx: dict[str, object]) -> str:
 
 async def on_startup(ctx: dict[str, object]) -> None:
     settings = get_settings()
-    redis = Redis.from_url(settings.redis_url)
+    redis = cast(Any, Redis).from_url(settings.redis_url)
     minio = Minio(
         settings.minio_endpoint,
         access_key=settings.minio_access_key,

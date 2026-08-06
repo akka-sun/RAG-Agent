@@ -37,16 +37,13 @@ class IngestionTask(Base):
             name="status_valid",
         ),
         CheckConstraint(
-            "stage IN ('queued', 'parsing', 'chunking', 'embedding', "
-            "'indexing', 'completed')",
+            "stage IN ('queued', 'parsing', 'chunking', 'embedding', 'indexing', 'completed')",
             name="stage_valid",
         ),
         CheckConstraint("progress BETWEEN 0 AND 100", name="progress_range"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     document_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("documents.id", ondelete="RESTRICT"),
@@ -76,11 +73,7 @@ class IngestionTask(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     document: Mapped["Document"] = relationship(back_populates="ingestion_tasks")

@@ -30,9 +30,7 @@ class Document(Base):
         ),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     knowledge_base_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("knowledge_bases.id", ondelete="RESTRICT"),
@@ -67,9 +65,7 @@ class Document(Base):
         onupdate=func.now(),
     )
 
-    knowledge_base: Mapped["KnowledgeBase"] = relationship(
-        back_populates="documents"
-    )
+    knowledge_base: Mapped["KnowledgeBase"] = relationship(back_populates="documents")
     ingestion_tasks: Mapped[list["IngestionTask"]] = relationship(
         back_populates="document",
         passive_deletes="all",

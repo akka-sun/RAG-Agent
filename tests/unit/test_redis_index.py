@@ -61,5 +61,6 @@ async def test_redis_errors_propagate() -> None:
     class Broken(FakeRedis):
         def get(self, name: str) -> None:
             raise RuntimeError("boom")
+
     with pytest.raises(RuntimeError, match="boom"):
         await RedisDocumentIndex(Broken()).get_document(KB, DOC)

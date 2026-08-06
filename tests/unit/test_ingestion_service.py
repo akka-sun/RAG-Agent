@@ -1,5 +1,6 @@
 import json
 import uuid
+from typing import Any
 
 import pytest
 
@@ -14,21 +15,21 @@ class Obj:
 
 
 class Session:
-    def __init__(self, factory, task, document):
+    def __init__(self, factory: Any, task: Any, document: Any) -> None:
         self.factory = factory
         self.task = task
         self.document = document
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "Session":
         return self
 
-    async def __aexit__(self, *_args):
+    async def __aexit__(self, *_args: object) -> bool:
         return False
 
-    async def get(self, model, _ident):
+    async def get(self, model: type[Any], _ident: object) -> Any:
         return self.task if model.__name__ == "IngestionTask" else self.document
 
-    async def commit(self):
+    async def commit(self) -> None:
         self.factory.commits.append(
             (
                 self.task.stage,
@@ -40,33 +41,33 @@ class Session:
         if self.factory.fail_compensation and self.task.status == TaskStatus.FAILED:
             raise RuntimeError("compensation commit failed")
 
-    async def rollback(self):
+    async def rollback(self) -> None:
         self.factory.rollbacks += 1
 
 
 class Factory:
-    def __init__(self, task, document, *, fail_compensation=False):
+    def __init__(self, task: Any, document: Any, *, fail_compensation: bool = False) -> None:
         self.task = task
         self.document = document
         self.fail_compensation = fail_compensation
-        self.sessions = []
-        self.commits = []
+        self.sessions: list[Session] = []
+        self.commits: list[tuple[Any, int, Any, str | None]] = []
         self.rollbacks = 0
 
-    def __call__(self):
+    def __call__(self) -> Session:
         session = Session(self, self.task, self.document)
         self.sessions.append(session)
         return session
 
 
 class Repo:
-    def __init__(self, session):
+    def __init__(self, session: Session) -> None:
         self.session = session
 
-    async def get(self, _task_id):
+    async def get(self, _task_id: object) -> Any:
         return self.session.task
 
-    async def claim_pending(self, _task_id):
+    async def claim_pending(self, _task_id: object) -> Any | None:
         if self.session.task.status != TaskStatus.PENDING:
             return None
         self.session.task.status = TaskStatus.PROCESSING
@@ -74,29 +75,29 @@ class Repo:
 
 
 class Storage:
-    def __init__(self, events, value=b"hello world"):
+    def __init__(self, events: list[str], value: bytes = b"hello world") -> None:
         self.events = events
         self.value = value
-        self.gets = []
-        self.puts = []
+        self.gets: list[str] = []
+        self.puts: list[tuple[str, bytes, str]] = []
 
-    async def get(self, key):
+    async def get(self, key: str) -> bytes:
         self.gets.append(key)
         self.events.append("storage.get")
         return self.value
 
-    async def put(self, key, value, content_type):
+    async def put(self, key: str, value: bytes, content_type: str) -> None:
         self.puts.append((key, value, content_type))
         self.events.append("storage.put")
 
 
 class Index:
-    def __init__(self, events, *, fail=False):
+    def __init__(self, events: list[str], *, fail: bool = False) -> None:
         self.events = events
         self.fail = fail
-        self.calls = []
+        self.calls: list[tuple[Any, ...]] = []
 
-    async def replace_document(self, *args):
+    async def replace_document(self, *args: Any) -> None:
         self.events.append("index")
         if self.fail:
             raise RuntimeError("index failed")
@@ -104,17 +105,18 @@ class Index:
 
 
 class Embedder:
-    def __init__(self, events):
+    def __init__(self, events: list[str]) -> None:
         self.events = events
 
-    def embed(self, text):
+    def embed(self, text: str) -> list[float]:
         self.events.append("embed")
         return [float(len(text))]
 
 
-def make_entities():
+def make_entities() -> tuple[uuid.UUID, uuid.UUID, Any, Any]:
     tid, did, kb_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
-    task, document = Obj(), Obj()
+    task: Any = Obj()
+    document: Any = Obj()
     task.id, task.document_id, task.status = tid, did, TaskStatus.PENDING
     task.stage, task.progress, task.error = TaskStage.QUEUED, 0, None
     task.completed_at = None
@@ -125,15 +127,17 @@ def make_entities():
 
 
 @pytest.mark.asyncio
-async def test_run_persists_exact_progress_payload_and_processing_order(monkeypatch):
+async def test_run_persists_exact_progress_payload_and_processing_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tid, did, task, document = make_entities()
-    events = []
+    events: list[str] = []
     factory = Factory(task, document)
     storage = Storage(events)
     index = Index(events)
     original_chunk = ingestion_module.chunk_text
 
-    def recording_chunk(text):
+    def recording_chunk(text: str) -> Any:
         events.append("chunk")
         return original_chunk(text)
 
@@ -162,10 +166,10 @@ async def test_run_persists_exact_progress_payload_and_processing_order(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_completed_task_is_idempotent(monkeypatch):
+async def test_completed_task_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
     tid, did, task, document = make_entities()
     task.status = TaskStatus.COMPLETED
-    events = []
+    events: list[str] = []
     storage, index = Storage(events), Index(events)
     monkeypatch.setattr(ingestion_module, "IngestionTaskRepository", Repo)
     await IngestionService(Factory(task, document), storage, index, Embedder(events)).run(tid, did)
@@ -174,9 +178,11 @@ async def test_completed_task_is_idempotent(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_failure_marks_entities_in_independent_session(monkeypatch):
+async def test_failure_marks_entities_in_independent_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tid, did, task, document = make_entities()
-    events = []
+    events: list[str] = []
     factory = Factory(task, document)
     monkeypatch.setattr(ingestion_module, "IngestionTaskRepository", Repo)
     with pytest.raises(RuntimeError, match="index failed"):
@@ -188,9 +194,11 @@ async def test_failure_marks_entities_in_independent_session(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_compensation_commit_failure_preserves_processing_exception(monkeypatch):
+async def test_compensation_commit_failure_preserves_processing_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tid, did, task, document = make_entities()
-    events = []
+    events: list[str] = []
     factory = Factory(task, document, fail_compensation=True)
     monkeypatch.setattr(ingestion_module, "IngestionTaskRepository", Repo)
     with pytest.raises(RuntimeError, match="index failed") as caught:

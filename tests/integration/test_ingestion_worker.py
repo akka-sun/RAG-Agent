@@ -1,15 +1,17 @@
+from typing import Any
+
 import pytest
 
 from app.worker import ingest_document, on_shutdown
 
 
 @pytest.mark.asyncio
-async def test_worker_delegates_to_ingestion_service():
+async def test_worker_delegates_to_ingestion_service() -> None:
     class Service:
-        def __init__(self):
-            self.calls = []
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
 
-        async def run(self, task_id, document_id):
+        async def run(self, task_id: str, document_id: str) -> None:
             self.calls.append((task_id, document_id))
 
     service = Service()
@@ -18,9 +20,9 @@ async def test_worker_delegates_to_ingestion_service():
 
 
 @pytest.mark.asyncio
-async def test_worker_propagates_service_error():
+async def test_worker_propagates_service_error() -> None:
     class Service:
-        async def run(self, *_args):
+        async def run(self, *_args: str) -> None:
             raise ValueError("boom")
 
     with pytest.raises(ValueError, match="boom"):
@@ -28,22 +30,30 @@ async def test_worker_propagates_service_error():
 
 
 @pytest.mark.asyncio
-async def test_shutdown_closes_redis_and_disposes_database_engine():
+async def test_shutdown_closes_redis_and_disposes_database_engine() -> None:
     class Redis:
-        def __init__(self):
+        def __init__(self) -> None:
             self.closed = False
 
-        def close(self):
+        def close(self) -> None:
             self.closed = True
 
     class Engine:
-        def __init__(self):
+        def __init__(self) -> None:
             self.disposed = False
 
-        async def dispose(self):
+        async def dispose(self) -> None:
             self.disposed = True
 
     redis, engine = Redis(), Engine()
-    await on_shutdown({"redis": redis, "engine": engine})
+    await on_shutdown({"redis": AnyRedis(redis), "engine": AnyEngine(engine)})
     assert redis.closed
     assert engine.disposed
+
+
+def AnyRedis(value: object) -> Any:
+    return value
+
+
+def AnyEngine(value: object) -> Any:
+    return value
