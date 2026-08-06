@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from httpx import Response
 
 from app.api import dependencies
+from app.api.errors import register_error_handlers
 from app.core.exceptions import IngestionQueueUnavailableError
 from app.infrastructure.queue import ArqIngestionQueue
 
@@ -88,3 +93,63 @@ async def test_queue_dependency_closes_redis_pool(
     with pytest.raises(StopAsyncIteration):
         await anext(dependency)
     assert redis.closed
+
+
+@pytest.mark.asyncio
+async def test_queue_dependency_maps_pool_creation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    error = ConnectionError("redis is down")
+
+    async def fake_create_pool(settings: object) -> object:
+        del settings
+        raise error
+
+    monkeypatch.setattr(dependencies, "create_pool", fake_create_pool)
+    dependency = cast(AsyncIterator[ArqIngestionQueue], dependencies.get_ingestion_queue())
+
+    with pytest.raises(IngestionQueueUnavailableError) as exc_info:
+        await anext(dependency)
+
+    assert exc_info.value.__cause__ is error
+
+
+def test_pool_creation_failure_uses_queue_unavailable_http_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_create_pool(settings: object) -> object:
+        del settings
+        raise ConnectionError("redis is down")
+
+    monkeypatch.setattr(dependencies, "create_pool", fake_create_pool)
+    app = FastAPI()
+    register_error_handlers(app)
+
+    @app.get("/enqueue")
+    async def enqueue(  # pyright: ignore[reportUnusedFunction]
+        queue: dependencies.IngestionQueueDependency,
+    ) -> None:
+        del queue
+
+    response = cast(
+        Response,
+        TestClient(app).get("/enqueue"),  # pyright: ignore[reportUnknownMemberType]
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "ingestion_queue_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_queue_dependency_does_not_map_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_create_pool(settings: object) -> object:
+        del settings
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(dependencies, "create_pool", fake_create_pool)
+    dependency = cast(AsyncIterator[ArqIngestionQueue], dependencies.get_ingestion_queue())
+
+    with pytest.raises(asyncio.CancelledError):
+        await anext(dependency)

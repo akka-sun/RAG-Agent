@@ -7,6 +7,7 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.core.exceptions import IngestionQueueUnavailableError
 from app.db import get_session
 from app.infrastructure.queue import ArqIngestionQueue, IngestionQueue
 from app.rag.embedding import HashingEmbedder
@@ -26,7 +27,10 @@ SessionDependency = Annotated[
 
 
 async def get_ingestion_queue() -> AsyncIterator[IngestionQueue]:
-    redis = await create_pool(RedisSettings.from_dsn(get_settings().redis_url))
+    try:
+        redis = await create_pool(RedisSettings.from_dsn(get_settings().redis_url))
+    except Exception as exc:
+        raise IngestionQueueUnavailableError("Ingestion queue is unavailable") from exc
     try:
         yield ArqIngestionQueue(redis)
     finally:
