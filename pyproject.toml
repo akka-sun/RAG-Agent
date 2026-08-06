@@ -6,9 +6,13 @@ readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "alembic>=1.18.5",
+    "arq>=0.28,<0.29",
     "asyncpg>=0.30",
     "fastapi>=0.121",
+    "minio>=7.2,<8",
     "pydantic-settings>=2.10",
+    "python-multipart>=0.0.20,<1",
+    "redis>=5,<6",
     "sqlalchemy[asyncio]>=2.0.51",
     "uvicorn[standard]>=0.34.2",
 ]
