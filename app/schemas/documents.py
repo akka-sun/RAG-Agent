@@ -1,3 +1,5 @@
+import ntpath
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 from uuid import UUID
@@ -11,14 +13,17 @@ MAX_DOCUMENT_SIZE = 5 * 1024 * 1024
 
 
 def validate_upload(filename: str | None, content: bytes) -> str:
-    if not filename:
+    if not filename or "\x00" in filename:
         raise UnsupportedDocumentError("filename is required")
     suffix = Path(filename).suffix.lower()
     if suffix not in ALLOWED_DOCUMENT_SUFFIXES or not content:
         raise UnsupportedDocumentError("only non-empty .md and .txt files are supported")
     if len(content) > MAX_DOCUMENT_SIZE:
         raise DocumentTooLargeError("document exceeds 5 MiB")
-    return Path(filename).name
+    basename = ntpath.basename(filename)
+    if not basename:
+        raise UnsupportedDocumentError("filename basename is required")
+    return basename
 
 
 class DocumentAcceptedResponse(BaseModel):
@@ -39,5 +44,5 @@ class DocumentResponse(BaseModel):
     status: str
     chunk_count: int
     error: str | None = None
-    created_at: object
-    updated_at: object
+    created_at: datetime
+    updated_at: datetime

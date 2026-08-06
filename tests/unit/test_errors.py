@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from httpx import Response
 
 from app.api.errors import register_error_handlers
+from app.core.exceptions import DocumentNotFoundError
 from app.services.knowledge_base import KnowledgeBaseNotFoundError
 
 
@@ -54,3 +55,16 @@ def test_unhandled_error_hides_internal_details() -> None:
             "details": None,
         }
     }
+
+
+def test_document_error_uses_unified_handler() -> None:
+    app = FastAPI()
+    register_error_handlers(app)
+
+    @app.get("/boom")
+    async def boom() -> None:
+        raise DocumentNotFoundError("missing")
+
+    response = TestClient(app).get("/boom")
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "document_not_found"

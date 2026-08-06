@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
@@ -29,6 +30,6 @@ class IngestionTaskResponse(BaseModel):
     stage: str
     progress: int
     error: str | None = None
-    created_at: object
-    started_at: object | None = None
-    completed_at: object | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None

@@ -6,6 +6,14 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.core.exceptions import (
+    DocumentError,
+    DocumentNotFoundError,
+    DocumentTooLargeError,
+    IngestionTaskNotFoundError,
+    InvalidStatusTransitionError,
+    UnsupportedDocumentError,
+)
 from app.services.knowledge_base import (
     KnowledgeBaseNameConflictError,
     KnowledgeBaseNotFoundError,
@@ -29,6 +37,19 @@ def error_body(
 
 
 def register_error_handlers(app: FastAPI) -> None:
+    async def handle_document_error(request: Request, exc: DocumentError) -> JSONResponse:
+        del request
+        status = 503
+        if isinstance(exc, DocumentNotFoundError | IngestionTaskNotFoundError):
+            status = 404
+        elif isinstance(exc, UnsupportedDocumentError | DocumentTooLargeError):
+            status = 422
+        elif isinstance(exc, InvalidStatusTransitionError):
+            status = 409
+        return JSONResponse(status_code=status, content=error_body(exc.code, str(exc)))
+
+    app.add_exception_handler(DocumentError, handle_document_error)
+
     @app.exception_handler(KnowledgeBaseNotFoundError)
     async def handle_not_found(  # pyright: ignore[reportUnusedFunction]
         request: Request,
