@@ -12,13 +12,16 @@ Completed:
 - Task 5: MinIO object storage adapter with cancellation-safe response cleanup.
 - Task 6: ARQ queue adapter with fixed job IDs and connection failure mapping.
 - Task 7: Multipart upload API and cross-storage compensation behavior.
+- Task 8: Redis shared document index with atomic document-level replacement.
 
 Validation for Task 7: PostgreSQL main/test migrations, 102 unit and integration tests,
 Ruff, and Pyright passed. One existing Starlette deprecation warning remains.
 
+Validation for Task 8: Redis index unit tests, overwrite/isolation/delete behavior,
+Ruff, and code review passed.
+
 Pending:
 
-- Task 8: Redis shared document index.
 - Task 9: Ingestion worker state machine.
 - Task 10: Query, download, retry, and delete APIs.
 - Task 11: End-to-end acceptance and learning documentation.
