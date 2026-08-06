@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ingestion_task import IngestionTask, TaskStatus
@@ -39,3 +39,9 @@ class IngestionTaskRepository:
             .exists()
         )
         return bool(await self._session.scalar(statement))
+
+    async def delete_by_document(self, document_id: uuid.UUID) -> None:
+        await self._session.execute(
+            delete(IngestionTask).where(IngestionTask.document_id == document_id)
+        )
+        await self._session.flush()

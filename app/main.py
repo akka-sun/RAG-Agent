@@ -4,6 +4,7 @@ from fastapi import APIRouter, FastAPI
 
 from app.api.errors import register_error_handlers
 from app.api.routes.documents import router as documents_router
+from app.api.routes.ingestion_tasks import router as ingestion_tasks_router
 from app.api.routes.knowledge_bases import (
     router as knowledge_bases_router,
 )
@@ -34,6 +35,7 @@ def create_app() -> FastAPI:
 
     router.include_router(knowledge_bases_router)
     router.include_router(documents_router)
+    router.include_router(ingestion_tasks_router)
     router.include_router(rag_router)
 
     application.include_router(router)

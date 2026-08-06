@@ -32,3 +32,7 @@ class DocumentStorageUnavailableError(DocumentError):
 
 class DocumentCleanupFailedError(DocumentError):
     code = "document_cleanup_failed"
+
+
+class ParsedDocumentNotReadyError(DocumentError):
+    code = "parsed_document_not_ready"

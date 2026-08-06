@@ -6,6 +6,7 @@ from uuid import UUID
 from arq.connections import RedisSettings, create_pool
 from fastapi import Depends
 from minio import Minio
+from redis import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -13,6 +14,7 @@ from app.core.exceptions import IngestionQueueUnavailableError
 from app.db import get_session
 from app.infrastructure.object_storage import MinioObjectStorage, ObjectStorage
 from app.infrastructure.queue import ArqIngestionQueue, IngestionQueue
+from app.infrastructure.redis_index import RedisDocumentIndex
 from app.rag.embedding import HashingEmbedder
 from app.rag.store import InMemoryVectorStore
 from app.repositories.documents import DocumentRepository
@@ -93,10 +95,25 @@ ObjectStorageDependency = Annotated[
 ]
 
 
+async def get_document_index() -> AsyncIterator[RedisDocumentIndex]:
+    redis = Redis.from_url(get_settings().redis_url)  # pyright: ignore[reportUnknownMemberType]
+    try:
+        yield RedisDocumentIndex(redis)  # pyright: ignore[reportArgumentType]
+    finally:
+        redis.close()
+
+
+DocumentIndexDependency = Annotated[
+    RedisDocumentIndex,
+    Depends(get_document_index),
+]
+
+
 def get_document_service(
     session: SessionDependency,
     storage: ObjectStorageDependency,
     queue: DocumentIngestionQueueDependency,
+    index: DocumentIndexDependency,
 ) -> DocumentService:
     return DocumentService(
         knowledge_bases=KnowledgeBaseRepository(session),
@@ -105,6 +122,7 @@ def get_document_service(
         session=session,
         storage=storage,
         queue=queue,
+        index=index,
     )
 
 

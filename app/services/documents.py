@@ -1,13 +1,17 @@
 import logging
 import uuid
-from typing import Protocol
+from typing import Any, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import (
     DocumentCleanupFailedError,
+    DocumentNotFoundError,
     DocumentStorageUnavailableError,
     IngestionQueueUnavailableError,
+    IngestionTaskNotFoundError,
+    InvalidStatusTransitionError,
+    ParsedDocumentNotReadyError,
 )
 from app.infrastructure.object_storage import ObjectStorage, source_key
 from app.infrastructure.queue import IngestionQueue
@@ -33,22 +37,42 @@ class DocumentRepositoryProtocol(Protocol):
         knowledge_base_id: uuid.UUID | None = None,
     ) -> Document | None: ...
 
+    async def list_by_knowledge_base(self, knowledge_base_id: uuid.UUID) -> list[Document]: ...
+
+    async def delete(self, document: Document) -> None: ...
+
 
 class IngestionTaskRepositoryProtocol(Protocol):
     async def add(self, task: IngestionTask) -> None: ...
 
     async def get(self, task_id: uuid.UUID) -> IngestionTask | None: ...
 
+    async def has_active_task(self, document_id: uuid.UUID) -> bool: ...
+
+    async def delete_by_document(self, document_id: uuid.UUID) -> None: ...
+
+
+class DocumentIndexProtocol(Protocol):
+    async def delete_document(
+        self, knowledge_base_id: uuid.UUID, document_id: uuid.UUID
+    ) -> None: ...
+
+
+class NullDocumentIndex:
+    async def delete_document(self, knowledge_base_id: uuid.UUID, document_id: uuid.UUID) -> None:
+        del knowledge_base_id, document_id
+
 
 class DocumentService:
     def __init__(
         self,
         knowledge_bases: KnowledgeBaseRepositoryProtocol,
-        documents: DocumentRepositoryProtocol,
-        tasks: IngestionTaskRepositoryProtocol,
+        documents: Any,
+        tasks: Any,
         session: AsyncSession,
         storage: ObjectStorage,
         queue: IngestionQueue,
+        index: DocumentIndexProtocol | None = None,
     ) -> None:
         self.knowledge_bases = knowledge_bases
         self.documents = documents
@@ -56,6 +80,90 @@ class DocumentService:
         self._session = session
         self._storage = storage
         self._queue = queue
+        self._index = index or NullDocumentIndex()
+
+    async def list_documents(self, knowledge_base_id: uuid.UUID) -> list[Document]:
+        if await self.knowledge_bases.get_by_id(knowledge_base_id) is None:
+            raise KnowledgeBaseNotFoundError
+        return await self.documents.list_by_knowledge_base(knowledge_base_id)
+
+    async def get_document(self, knowledge_base_id: uuid.UUID, document_id: uuid.UUID) -> Document:
+        document = await self.documents.get(document_id, knowledge_base_id)
+        if document is None:
+            raise DocumentNotFoundError("Document not found")
+        return document
+
+    async def get_task(self, task_id: uuid.UUID) -> IngestionTask:
+        task = await self.tasks.get(task_id)
+        if task is None:
+            raise IngestionTaskNotFoundError("Ingestion task not found")
+        return task
+
+    async def download_source(
+        self, knowledge_base_id: uuid.UUID, document_id: uuid.UUID
+    ) -> tuple[str, str, bytes]:
+        document = await self.get_document(knowledge_base_id, document_id)
+        try:
+            content = await self._storage.get(document.source_object_key)
+        except Exception as exc:
+            raise DocumentStorageUnavailableError("Document storage is unavailable") from exc
+        return document.filename, document.content_type, content
+
+    async def download_parsed(self, knowledge_base_id: uuid.UUID, document_id: uuid.UUID) -> bytes:
+        document = await self.get_document(knowledge_base_id, document_id)
+        if document.parsed_object_key is None:
+            raise ParsedDocumentNotReadyError("Parsed document is not ready")
+        try:
+            return await self._storage.get(document.parsed_object_key)
+        except Exception as exc:
+            raise DocumentStorageUnavailableError("Document storage is unavailable") from exc
+
+    async def retry(self, knowledge_base_id: uuid.UUID, document_id: uuid.UUID) -> IngestionTask:
+        document = await self.get_document(knowledge_base_id, document_id)
+        if document.status != DocumentStatus.FAILED or await self.tasks.has_active_task(
+            document.id
+        ):
+            raise InvalidStatusTransitionError(
+                "Only failed documents without active tasks can retry"
+            )
+        task = IngestionTask(id=uuid.uuid4(), document_id=document.id, status=TaskStatus.PENDING)
+        document.status = DocumentStatus.PENDING
+        document.error = None
+        await self.tasks.add(task)
+        await self._session.commit()
+        try:
+            job_id = await self._queue.enqueue(task.id, document.id)
+            task.arq_job_id = job_id
+            await self._session.commit()
+        except Exception as exc:
+            await self._session.rollback()
+            if task.arq_job_id is not None:
+                try:
+                    _, recovered_task = await self._recover_enqueued_task(
+                        document.id, task.id, task.arq_job_id
+                    )
+                    return recovered_task
+                except Exception as compensation_error:
+                    raise DocumentCleanupFailedError(
+                        "Failed to persist the enqueued task job ID"
+                    ) from compensation_error
+            await self._mark_enqueue_failed(document.id, task.id, str(exc))
+            raise IngestionQueueUnavailableError("Ingestion queue is unavailable") from exc
+        return task
+
+    async def delete(self, knowledge_base_id: uuid.UUID, document_id: uuid.UUID) -> None:
+        document = await self.get_document(knowledge_base_id, document_id)
+        try:
+            await self._index.delete_document(knowledge_base_id, document_id)
+            if document.parsed_object_key is not None:
+                await self._storage.delete(document.parsed_object_key)
+            await self._storage.delete(document.source_object_key)
+        except Exception as exc:
+            await self._session.rollback()
+            raise DocumentCleanupFailedError("Document cleanup failed") from exc
+        await self.tasks.delete_by_document(document.id)
+        await self.documents.delete(document)
+        await self._session.commit()
 
     async def upload(
         self,
