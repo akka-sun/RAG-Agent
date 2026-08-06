@@ -21,3 +21,11 @@ def test_dockerfile_builds_locked_virtualenv_outside_bind_mount() -> None:
     assert "UV_PROJECT_ENVIRONMENT=/opt/venv" in dockerfile
     assert "COPY pyproject.toml uv.lock ./" in dockerfile
     assert "uv sync --locked --no-install-project --group dev --group test" in dockerfile
+
+
+def test_worker_healthcheck_allows_arq_startup_overhead() -> None:
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    healthcheck = compose["services"]["worker"]["healthcheck"]
+
+    assert healthcheck["timeout"] == "20s"
+    assert healthcheck["interval"] == "30s"
