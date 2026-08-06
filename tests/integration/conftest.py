@@ -26,13 +26,17 @@ async def db_session() -> AsyncIterator[AsyncSession]:
 
     try:
         async with test_session_factory() as session:
-            await session.execute(text("TRUNCATE TABLE knowledge_bases"))
+            await session.execute(
+                text("TRUNCATE TABLE ingestion_tasks, documents, knowledge_bases")
+            )
             await session.commit()
 
             yield session
 
             await session.rollback()
-            await session.execute(text("TRUNCATE TABLE knowledge_bases"))
+            await session.execute(
+                text("TRUNCATE TABLE ingestion_tasks, documents, knowledge_bases")
+            )
             await session.commit()
     finally:
         await test_engine.dispose()

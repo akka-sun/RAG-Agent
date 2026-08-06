@@ -1,11 +1,15 @@
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import CheckConstraint, DateTime, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
+
+if TYPE_CHECKING:
+    from app.models.document import Document
 
 
 class KnowledgeBase(Base):
@@ -50,4 +54,9 @@ class KnowledgeBase(Base):
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+    )
+
+    documents: Mapped[list["Document"]] = relationship(
+        back_populates="knowledge_base",
+        passive_deletes="all",
     )
