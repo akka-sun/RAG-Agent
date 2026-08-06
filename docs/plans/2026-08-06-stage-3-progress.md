@@ -15,6 +15,7 @@ Completed:
 - Task 8: Redis shared document index with atomic document-level replacement.
 - Task 9: Idempotent ingestion worker state machine with observable progress.
 - Task 10: Document query, download, retry, and coordinated deletion APIs.
+- Task 11: Real Compose end-to-end acceptance and learning documentation.
 
 Validation for Task 7: PostgreSQL main/test migrations, 102 unit and integration tests,
 Ruff, and Pyright passed. One existing Starlette deprecation warning remains.
@@ -28,6 +29,9 @@ and code review passed.
 Validation for Task 10: 125 unit and integration tests, real PostgreSQL retry/delete
 coverage, Ruff, targeted Pyright, and code review passed.
 
-Pending:
+Validation for Task 11: an isolated Docker Compose project with dedicated ports and
+volumes migrated both main and test databases. The real HTTP/ARQ/PostgreSQL/MinIO/Redis
+workflow passed upload, polling, download, idempotent worker re-entry, and coordinated
+deletion acceptance. Full static and test-suite results are recorded in the Task 11 commit.
 
-- Task 11: End-to-end acceptance and learning documentation.
+Pending: none for Stage 3.
