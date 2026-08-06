@@ -6,7 +6,12 @@ from pydantic import BaseModel, ConfigDict
 from app.core.exceptions import InvalidStatusTransitionError
 
 TaskStatus = Literal["pending", "processing", "completed", "failed"]
-_TRANSITIONS = {"pending": {"processing"}, "processing": {"completed", "failed"}, "completed": set(), "failed": set()}
+_TRANSITIONS = {
+    "pending": {"processing"},
+    "processing": {"completed", "failed"},
+    "completed": set(),
+    "failed": set(),
+}
 
 
 def transition_status(current: str, target: str) -> str:

@@ -20,4 +20,3 @@ class DocumentNotFoundError(DocumentError):
 
 class IngestionTaskNotFoundError(DocumentError):
     code = "ingestion_task_not_found"
-
