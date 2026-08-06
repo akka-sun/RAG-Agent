@@ -1,10 +1,14 @@
+from collections.abc import AsyncIterator
 from functools import lru_cache
 from typing import Annotated
 
+from arq.connections import RedisSettings, create_pool
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.db import get_session
+from app.infrastructure.queue import ArqIngestionQueue, IngestionQueue
 from app.rag.embedding import HashingEmbedder
 from app.rag.store import InMemoryVectorStore
 from app.repositories.knowledge_base import (
@@ -18,6 +22,20 @@ from app.services.rag import RAGService
 SessionDependency = Annotated[
     AsyncSession,
     Depends(get_session),
+]
+
+
+async def get_ingestion_queue() -> AsyncIterator[IngestionQueue]:
+    redis = await create_pool(RedisSettings.from_dsn(get_settings().redis_url))
+    try:
+        yield ArqIngestionQueue(redis)
+    finally:
+        await redis.aclose()
+
+
+IngestionQueueDependency = Annotated[
+    IngestionQueue,
+    Depends(get_ingestion_queue),
 ]
 
 
