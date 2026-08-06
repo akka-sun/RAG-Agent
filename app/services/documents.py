@@ -2,15 +2,16 @@ import logging
 import uuid
 from typing import Any, Protocol
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import (
     DocumentCleanupFailedError,
     DocumentNotFoundError,
+    DocumentNotRetryableError,
     DocumentStorageUnavailableError,
     IngestionQueueUnavailableError,
     IngestionTaskNotFoundError,
-    InvalidStatusTransitionError,
     ParsedDocumentNotReadyError,
 )
 from app.infrastructure.object_storage import ObjectStorage, source_key
@@ -18,7 +19,7 @@ from app.infrastructure.queue import IngestionQueue
 from app.models.document import Document, DocumentStatus
 from app.models.ingestion_task import IngestionTask, TaskStatus
 from app.models.knowledge_base import KnowledgeBase
-from app.schemas.documents import validate_upload
+from app.schemas.documents import normalize_content_type, validate_upload
 from app.services.knowledge_base import KnowledgeBaseNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -119,18 +120,24 @@ class DocumentService:
             raise DocumentStorageUnavailableError("Document storage is unavailable") from exc
 
     async def retry(self, knowledge_base_id: uuid.UUID, document_id: uuid.UUID) -> IngestionTask:
-        document = await self.get_document(knowledge_base_id, document_id)
+        document = await self.documents.get_for_update(document_id, knowledge_base_id)
+        if document is None:
+            raise DocumentNotFoundError("Document not found")
         if document.status != DocumentStatus.FAILED or await self.tasks.has_active_task(
             document.id
         ):
-            raise InvalidStatusTransitionError(
-                "Only failed documents without active tasks can retry"
-            )
+            raise DocumentNotRetryableError("Only failed documents without active tasks can retry")
         task = IngestionTask(id=uuid.uuid4(), document_id=document.id, status=TaskStatus.PENDING)
         document.status = DocumentStatus.PENDING
         document.error = None
-        await self.tasks.add(task)
-        await self._session.commit()
+        try:
+            await self.tasks.add(task)
+            await self._session.commit()
+        except IntegrityError as exc:
+            await self._session.rollback()
+            raise DocumentNotRetryableError(
+                "Only one active ingestion task is allowed per document"
+            ) from exc
         try:
             job_id = await self._queue.enqueue(task.id, document.id)
             task.arq_job_id = job_id
@@ -152,7 +159,15 @@ class DocumentService:
         return task
 
     async def delete(self, knowledge_base_id: uuid.UUID, document_id: uuid.UUID) -> None:
-        document = await self.get_document(knowledge_base_id, document_id)
+        document = await self.documents.get_for_update(document_id, knowledge_base_id)
+        if document is None:
+            raise DocumentNotFoundError("Document not found")
+        active_status = document.status in (
+            DocumentStatus.PENDING,
+            DocumentStatus.PROCESSING,
+        )
+        if active_status or await self.tasks.has_active_task(document.id):
+            raise DocumentNotRetryableError("Active documents cannot be deleted")
         try:
             await self._index.delete_document(knowledge_base_id, document_id)
             if document.parsed_object_key is not None:
@@ -176,11 +191,12 @@ class DocumentService:
             raise KnowledgeBaseNotFoundError
 
         safe_filename = validate_upload(filename, content)
+        safe_content_type = normalize_content_type(content_type)
         document = Document(
             id=uuid.uuid4(),
             knowledge_base_id=knowledge_base_id,
             filename=safe_filename,
-            content_type=content_type,
+            content_type=safe_content_type,
             size_bytes=len(content),
             source_object_key="",
             status=DocumentStatus.PENDING,
@@ -193,7 +209,7 @@ class DocumentService:
         )
 
         try:
-            await self._storage.put(document.source_object_key, content, content_type)
+            await self._storage.put(document.source_object_key, content, safe_content_type)
         except Exception as exc:
             raise DocumentStorageUnavailableError("Document storage is unavailable") from exc
 

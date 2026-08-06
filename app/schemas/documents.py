@@ -10,6 +10,14 @@ from app.core.exceptions import DocumentTooLargeError, UnsupportedDocumentError
 
 ALLOWED_DOCUMENT_SUFFIXES = {".md", ".txt"}
 MAX_DOCUMENT_SIZE = 5 * 1024 * 1024
+SAFE_CONTENT_TYPES = {"text/plain", "text/markdown"}
+
+
+def normalize_content_type(content_type: str | None) -> str:
+    if not content_type or "\r" in content_type or "\n" in content_type:
+        return "application/octet-stream"
+    media_type = content_type.split(";", maxsplit=1)[0].strip().lower()
+    return media_type if media_type in SAFE_CONTENT_TYPES else "application/octet-stream"
 
 
 def validate_upload(filename: str | None, content: bytes) -> str:

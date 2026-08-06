@@ -1,11 +1,17 @@
+import asyncio
 import uuid
 
 import pytest
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.core.exceptions import IngestionQueueUnavailableError
-from app.models.document import DocumentStatus
+from app.config import get_settings
+from app.core.exceptions import (
+    DocumentCleanupFailedError,
+    DocumentNotRetryableError,
+    IngestionQueueUnavailableError,
+)
+from app.models.document import Document, DocumentStatus
 from app.models.ingestion_task import IngestionTask, TaskStatus
 from app.models.knowledge_base import KnowledgeBase
 from app.repositories.documents import DocumentRepository
@@ -15,8 +21,9 @@ from app.services.documents import DocumentService
 
 
 class MemoryStorage:
-    def __init__(self) -> None:
+    def __init__(self, fail_delete: str | None = None) -> None:
         self.objects: dict[str, bytes] = {}
+        self.fail_delete = fail_delete
 
     async def put(self, key: str, data: bytes, content_type: str) -> None:
         del content_type
@@ -26,7 +33,20 @@ class MemoryStorage:
         return self.objects[key]
 
     async def delete(self, key: str) -> None:
+        if key == self.fail_delete:
+            raise RuntimeError("storage unavailable")
         del self.objects[key]
+
+
+class MemoryIndex:
+    def __init__(self, fail: bool = False) -> None:
+        self.documents: set[tuple[uuid.UUID, uuid.UUID]] = set()
+        self.fail = fail
+
+    async def delete_document(self, knowledge_base_id: uuid.UUID, document_id: uuid.UUID) -> None:
+        if self.fail:
+            raise RuntimeError("redis unavailable")
+        self.documents.discard((knowledge_base_id, document_id))
 
 
 class FixedQueue:
@@ -143,3 +163,130 @@ async def test_service_recovers_second_commit_failure_with_real_postgres(
     assert stored_task.arq_job_id == str(task_id)
     assert stored_document.status == DocumentStatus.PENDING
     assert stored_task.status == TaskStatus.PENDING
+
+
+async def test_upload_normalizes_unsafe_content_type(
+    db_session: AsyncSession,
+) -> None:
+    service, knowledge_base, storage = await make_service(db_session, FixedQueue())
+
+    document, _ = await service.upload(
+        knowledge_base.id,
+        "notes.md",
+        "text/html\r\nX-Injected: yes",
+        b"notes",
+    )
+
+    assert document.content_type == "application/octet-stream"
+    assert storage.objects[document.source_object_key] == b"notes"
+
+
+async def test_delete_rejects_active_document_before_external_cleanup(
+    db_session: AsyncSession,
+) -> None:
+    service, knowledge_base, storage = await make_service(db_session, FixedQueue())
+    document, _ = await service.upload(knowledge_base.id, "notes.md", "text/markdown", b"notes")
+
+    with pytest.raises(DocumentNotRetryableError):
+        await service.delete(knowledge_base.id, document.id)
+
+    assert await DocumentRepository(db_session).get(document.id) is not None
+    assert document.source_object_key in storage.objects
+
+
+async def test_concurrent_retry_creates_only_one_active_task(
+    db_session: AsyncSession,
+) -> None:
+    knowledge_base = KnowledgeBase(
+        name=f"concurrent-{uuid.uuid4()}",
+        description="",
+        embedding_model="hashing",
+        embedding_dimension=64,
+    )
+    document = Document(
+        knowledge_base=knowledge_base,
+        filename="notes.md",
+        content_type="text/markdown",
+        size_bytes=5,
+        source_object_key="source",
+        status=DocumentStatus.FAILED,
+    )
+    db_session.add_all([knowledge_base, document])
+    await db_session.commit()
+
+    engine = create_async_engine(get_settings().test_database_url)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    storage = MemoryStorage()
+
+    async def run_retry() -> object:
+        async with factory() as session:
+            service = DocumentService(
+                KnowledgeBaseRepository(session),
+                DocumentRepository(session),
+                IngestionTaskRepository(session),
+                session,
+                storage,
+                FixedQueue(),
+            )
+            try:
+                return await service.retry(knowledge_base.id, document.id)
+            except DocumentNotRetryableError as exc:
+                return exc
+
+    try:
+        results = await asyncio.gather(run_retry(), run_retry())
+        assert sum(isinstance(result, IngestionTask) for result in results) == 1
+        assert sum(isinstance(result, DocumentNotRetryableError) for result in results) == 1
+        active_count = await db_session.scalar(
+            select(func.count()).where(
+                IngestionTask.document_id == document.id,
+                IngestionTask.status.in_((TaskStatus.PENDING, TaskStatus.PROCESSING)),
+            )
+        )
+        assert active_count == 1
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.parametrize("failure", ["index", "parsed", "source"])
+async def test_delete_external_failure_preserves_real_database_record(
+    db_session: AsyncSession,
+    failure: str,
+) -> None:
+    knowledge_base = KnowledgeBase(
+        name=f"cleanup-{uuid.uuid4()}",
+        description="",
+        embedding_model="hashing",
+        embedding_dimension=64,
+    )
+    document = Document(
+        knowledge_base=knowledge_base,
+        filename="notes.md",
+        content_type="text/markdown",
+        size_bytes=5,
+        source_object_key="source",
+        parsed_object_key="parsed",
+        status=DocumentStatus.COMPLETED,
+    )
+    db_session.add_all([knowledge_base, document])
+    await db_session.commit()
+    document_id = document.id
+    knowledge_base_id = knowledge_base.id
+    storage = MemoryStorage(fail_delete=failure if failure != "index" else None)
+    storage.objects = {"source": b"notes", "parsed": b"{}"}
+    index = MemoryIndex(fail=failure == "index")
+    index.documents.add((knowledge_base_id, document_id))
+    service = DocumentService(
+        KnowledgeBaseRepository(db_session),
+        DocumentRepository(db_session),
+        IngestionTaskRepository(db_session),
+        db_session,
+        storage,
+        FixedQueue(),
+        index,
+    )
+
+    with pytest.raises(DocumentCleanupFailedError, match="Document cleanup failed"):
+        await service.delete(knowledge_base_id, document_id)
+
+    assert await DocumentRepository(db_session).get(document_id) is not None

@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from app.core.exceptions import (
     DocumentError,
     DocumentNotFoundError,
+    DocumentNotRetryableError,
     DocumentTooLargeError,
     IngestionTaskNotFoundError,
     InvalidStatusTransitionError,
@@ -49,7 +50,10 @@ def register_error_handlers(app: FastAPI) -> None:
             status = 404
         elif isinstance(exc, UnsupportedDocumentError | DocumentTooLargeError):
             status = 422
-        elif isinstance(exc, InvalidStatusTransitionError | ParsedDocumentNotReadyError):
+        elif isinstance(
+            exc,
+            InvalidStatusTransitionError | ParsedDocumentNotReadyError | DocumentNotRetryableError,
+        ):
             status = 409
         return JSONResponse(status_code=status, content=error_body(exc.code, str(exc)))
 

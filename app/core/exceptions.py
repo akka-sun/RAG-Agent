@@ -36,3 +36,7 @@ class DocumentCleanupFailedError(DocumentError):
 
 class ParsedDocumentNotReadyError(DocumentError):
     code = "parsed_document_not_ready"
+
+
+class DocumentNotRetryableError(InvalidStatusTransitionError):
+    code = "document_not_retryable"

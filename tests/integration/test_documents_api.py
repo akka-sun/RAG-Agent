@@ -160,7 +160,7 @@ async def test_retry_rejects_non_failed_document() -> None:
     knowledge_base_id = uuid.uuid4()
     document = Document(id=uuid.uuid4(), knowledge_base_id=knowledge_base_id, status="completed")
     documents = AsyncMock()
-    documents.get.return_value = document
+    documents.get_for_update.return_value = document
     service = DocumentService(
         AsyncMock(), documents, AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock()
     )
@@ -178,8 +178,9 @@ async def test_delete_cleans_external_resources_before_database() -> None:
         parsed_object_key="parsed",
     )
     documents = AsyncMock()
-    documents.get.return_value = document
+    documents.get_for_update.return_value = document
     tasks = AsyncMock()
+    tasks.has_active_task.return_value = False
     session = AsyncMock()
     storage = AsyncMock()
     index = AsyncMock()
@@ -200,8 +201,9 @@ async def test_delete_cleanup_failure_preserves_database_records() -> None:
         id=uuid.uuid4(), knowledge_base_id=knowledge_base_id, source_object_key="source"
     )
     documents = AsyncMock()
-    documents.get.return_value = document
+    documents.get_for_update.return_value = document
     tasks = AsyncMock()
+    tasks.has_active_task.return_value = False
     session = AsyncMock()
     index = AsyncMock()
     index.delete_document.side_effect = RuntimeError("redis unavailable")
