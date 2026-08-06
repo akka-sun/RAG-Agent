@@ -24,3 +24,7 @@ class IngestionTaskNotFoundError(DocumentError):
 
 class IngestionQueueUnavailableError(DocumentError):
     code = "ingestion_queue_unavailable"
+
+
+class DocumentStorageUnavailableError(DocumentError):
+    code = "document_storage_unavailable"

@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator
 
 import pytest
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
@@ -43,9 +44,9 @@ async def db_session() -> AsyncIterator[AsyncSession]:
 
 
 @pytest.fixture
-async def client(
+def app(
     db_session: AsyncSession,
-) -> AsyncIterator[AsyncClient]:
+) -> FastAPI:
     app = create_app()
     rag_store = InMemoryVectorStore()
 
@@ -57,6 +58,12 @@ async def client(
 
     app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_rag_store] = override_rag_store
+
+    return app
+
+
+@pytest.fixture
+async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
 
     transport = ASGITransport(app=app)
 

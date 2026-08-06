@@ -62,9 +62,12 @@ def test_document_error_uses_unified_handler() -> None:
     register_error_handlers(app)
 
     @app.get("/boom")
-    async def boom() -> None:
+    async def boom() -> None:  # pyright: ignore[reportUnusedFunction]
         raise DocumentNotFoundError("missing")
 
-    response = TestClient(app).get("/boom")
+    response = cast(
+        Response,
+        TestClient(app).get("/boom"),  # pyright: ignore[reportUnknownMemberType]
+    )
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "document_not_found"

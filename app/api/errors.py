@@ -37,7 +37,11 @@ def error_body(
 
 
 def register_error_handlers(app: FastAPI) -> None:
-    async def handle_document_error(request: Request, exc: DocumentError) -> JSONResponse:
+    @app.exception_handler(DocumentError)
+    async def handle_document_error(  # pyright: ignore[reportUnusedFunction]
+        request: Request,
+        exc: DocumentError,
+    ) -> JSONResponse:
         del request
         status = 503
         if isinstance(exc, DocumentNotFoundError | IngestionTaskNotFoundError):
@@ -47,8 +51,6 @@ def register_error_handlers(app: FastAPI) -> None:
         elif isinstance(exc, InvalidStatusTransitionError):
             status = 409
         return JSONResponse(status_code=status, content=error_body(exc.code, str(exc)))
-
-    app.add_exception_handler(DocumentError, handle_document_error)
 
     @app.exception_handler(KnowledgeBaseNotFoundError)
     async def handle_not_found(  # pyright: ignore[reportUnusedFunction]
