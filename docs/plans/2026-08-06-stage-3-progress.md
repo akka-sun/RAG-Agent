@@ -13,6 +13,7 @@ Completed:
 - Task 6: ARQ queue adapter with fixed job IDs and connection failure mapping.
 - Task 7: Multipart upload API and cross-storage compensation behavior.
 - Task 8: Redis shared document index with atomic document-level replacement.
+- Task 9: Idempotent ingestion worker state machine with observable progress.
 
 Validation for Task 7: PostgreSQL main/test migrations, 102 unit and integration tests,
 Ruff, and Pyright passed. One existing Starlette deprecation warning remains.
@@ -20,8 +21,10 @@ Ruff, and Pyright passed. One existing Starlette deprecation warning remains.
 Validation for Task 8: Redis index unit tests, overwrite/isolation/delete behavior,
 Ruff, and code review passed.
 
+Validation for Task 9: 11 targeted state-machine and worker lifecycle tests, Ruff,
+and code review passed.
+
 Pending:
 
-- Task 9: Ingestion worker state machine.
 - Task 10: Query, download, retry, and delete APIs.
 - Task 11: End-to-end acceptance and learning documentation.
