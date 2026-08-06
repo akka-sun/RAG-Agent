@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from app.api.errors import error_body
 from app.core.exceptions import (
     DocumentTooLargeError,
     InvalidStatusTransitionError,
@@ -14,10 +15,12 @@ from app.schemas.documents import (
     DocumentResponse,
     validate_upload,
 )
+from app.schemas.errors import ErrorResponse
 from app.schemas.ingestion_tasks import IngestionTaskResponse, transition_status
 
 
 def test_validate_upload_contract() -> None:
+    # Contract: normalize client paths to a safe basename, rather than rejecting traversal segments.
     assert validate_upload("../folder/Readme.MD", b"x") == "Readme.MD"
     assert validate_upload("a.txt", b"x" * MAX_DOCUMENT_SIZE) == "a.txt"
     with pytest.raises(DocumentTooLargeError):
@@ -79,3 +82,11 @@ def test_response_models_serialize_orm_objects() -> None:
 def test_invalid_status_transitions(current: str, target: str) -> None:
     with pytest.raises(InvalidStatusTransitionError):
         transition_status(current, target)
+
+
+def test_status_transition_error_uses_unified_envelope() -> None:
+    error = InvalidStatusTransitionError("pending -> completed")
+    response = ErrorResponse.model_validate(
+        error_body(error.code, str(error), {"from": "pending", "to": "completed"})
+    )
+    assert response.error.code == "invalid_status_transition"

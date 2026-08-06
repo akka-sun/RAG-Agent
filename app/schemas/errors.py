@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 
 class ErrorCode(StrEnum):
+    INVALID_STATUS_TRANSITION = "invalid_status_transition"
     DOCUMENT_NOT_FOUND = "document_not_found"
     INGESTION_TASK_NOT_FOUND = "ingestion_task_not_found"
     UNSUPPORTED_DOCUMENT = "unsupported_document"
