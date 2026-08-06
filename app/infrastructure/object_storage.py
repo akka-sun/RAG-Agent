@@ -95,15 +95,15 @@ class MinioObjectStorage:
 
     async def get(self, key: str) -> bytes:
         await self._ensure_bucket()
-        response = await asyncio.to_thread(self._client.get_object, self._bucket, key)
-        return await asyncio.to_thread(self._read_and_release, response)
+        return await asyncio.to_thread(self._get_read_and_release, self._client, self._bucket, key)
 
     async def delete(self, key: str) -> None:
         await self._ensure_bucket()
         await asyncio.to_thread(self._client.remove_object, self._bucket, key)
 
     @staticmethod
-    def _read_and_release(response: _ObjectResponse) -> bytes:
+    def _get_read_and_release(client: _MinioClient, bucket: str, key: str) -> bytes:
+        response = client.get_object(bucket, key)
         try:
             return response.read()
         finally:

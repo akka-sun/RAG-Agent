@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import threading
 from collections.abc import Callable
 from typing import Any
 from uuid import UUID
@@ -135,6 +136,38 @@ async def test_get_releases_response_when_read_fails() -> None:
     with pytest.raises(RuntimeError, match="read failed"):
         await storage.get("parsed/key")
 
+    assert response.closed
+    assert response.released
+
+
+@pytest.mark.asyncio
+async def test_get_releases_response_when_cancelled_during_get_object() -> None:
+    get_started = threading.Event()
+    allow_get_to_finish = threading.Event()
+    response_released = threading.Event()
+
+    class CancellationResponse(FakeResponse):
+        def release_conn(self) -> None:
+            super().release_conn()
+            response_released.set()
+
+    class BlockingMinio(FakeMinio):
+        def get_object(self, *args: Any, **kwargs: Any) -> FakeResponse:
+            get_started.set()
+            assert allow_get_to_finish.wait(timeout=5)
+            return super().get_object(*args, **kwargs)
+
+    response = CancellationResponse()
+    storage = MinioObjectStorage(BlockingMinio(response=response), "documents")
+    task = asyncio.create_task(storage.get("parsed/key"))
+    assert await asyncio.to_thread(get_started.wait, 5)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    allow_get_to_finish.set()
+
+    assert await asyncio.to_thread(response_released.wait, 5)
     assert response.closed
     assert response.released
 
