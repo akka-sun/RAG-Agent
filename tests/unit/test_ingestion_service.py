@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+from app.core.exceptions import DocumentCleanupFailedError
 from app.models.document import DocumentStatus
 from app.models.ingestion_task import TaskStage, TaskStatus
 from app.services import ingestion as ingestion_module
@@ -75,11 +76,19 @@ class Repo:
 
 
 class Storage:
-    def __init__(self, events: list[str], value: bytes = b"hello world") -> None:
+    def __init__(
+        self,
+        events: list[str],
+        value: bytes = b"hello world",
+        *,
+        fail_delete: bool = False,
+    ) -> None:
         self.events = events
         self.value = value
         self.gets: list[str] = []
         self.puts: list[tuple[str, bytes, str]] = []
+        self.deletes: list[str] = []
+        self.fail_delete = fail_delete
 
     async def get(self, key: str) -> bytes:
         self.gets.append(key)
@@ -89,6 +98,12 @@ class Storage:
     async def put(self, key: str, value: bytes, content_type: str) -> None:
         self.puts.append((key, value, content_type))
         self.events.append("storage.put")
+
+    async def delete(self, key: str) -> None:
+        self.deletes.append(key)
+        self.events.append("storage.delete")
+        if self.fail_delete:
+            raise RuntimeError("parsed cleanup failed")
 
 
 class Index:
@@ -185,23 +200,47 @@ async def test_failure_marks_entities_in_independent_session(
     events: list[str] = []
     factory = Factory(task, document)
     monkeypatch.setattr(ingestion_module, "IngestionTaskRepository", Repo)
+    storage = Storage(events)
     with pytest.raises(RuntimeError, match="index failed"):
-        await IngestionService(factory, Storage(events), Index(events, fail=True)).run(tid, did)
+        await IngestionService(factory, storage, Index(events, fail=True)).run(tid, did)
     assert task.status == TaskStatus.FAILED
     assert document.status == DocumentStatus.FAILED
     assert task.error == document.error == "index failed"
+    assert storage.deletes == ["kb/parsed.json"]
     assert factory.sessions[-1] is not factory.sessions[-2]
 
 
 @pytest.mark.asyncio
-async def test_compensation_commit_failure_preserves_processing_exception(
+async def test_compensation_commit_failure_is_explicit_with_processing_error_as_cause(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tid, did, task, document = make_entities()
     events: list[str] = []
     factory = Factory(task, document, fail_compensation=True)
     monkeypatch.setattr(ingestion_module, "IngestionTaskRepository", Repo)
-    with pytest.raises(RuntimeError, match="index failed") as caught:
+    with pytest.raises(DocumentCleanupFailedError, match="failed status") as caught:
         await IngestionService(factory, Storage(events), Index(events, fail=True)).run(tid, did)
-    assert str(caught.value) == "index failed"
+    assert isinstance(caught.value.__cause__, RuntimeError)
+    assert str(caught.value.__cause__) == "index failed"
     assert factory.rollbacks == 1
+
+
+@pytest.mark.asyncio
+async def test_parsed_cleanup_failure_is_explicit_with_processing_error_as_cause(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tid, did, task, document = make_entities()
+    events: list[str] = []
+    storage = Storage(events, fail_delete=True)
+    monkeypatch.setattr(ingestion_module, "IngestionTaskRepository", Repo)
+
+    with pytest.raises(DocumentCleanupFailedError, match="parsed object") as caught:
+        await IngestionService(Factory(task, document), storage, Index(events, fail=True)).run(
+            tid, did
+        )
+
+    assert isinstance(caught.value.__cause__, RuntimeError)
+    assert str(caught.value.__cause__) == "index failed"
+    assert task.status == TaskStatus.FAILED
+    assert document.status == DocumentStatus.FAILED
+    assert storage.deletes == ["kb/parsed.json"]

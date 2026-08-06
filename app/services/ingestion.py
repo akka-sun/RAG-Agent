@@ -5,6 +5,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from app.core.exceptions import DocumentCleanupFailedError
 from app.models.document import Document, DocumentStatus
 from app.models.ingestion_task import IngestionTask, TaskStage, TaskStatus
 from app.rag.chunking import chunk_text
@@ -46,25 +47,23 @@ class IngestionService:
             await session.commit()
 
     async def _mark_failed(self, tid: uuid.UUID, did: uuid.UUID, error: str) -> None:
-        try:
-            async with self.session_factory() as session:
-                try:
-                    task = await session.get(IngestionTask, tid)
-                    document = await session.get(Document, did)
-                    if task is not None:
-                        task.status, task.error = TaskStatus.FAILED, error
-                    if document is not None:
-                        document.status, document.error = DocumentStatus.FAILED, error
-                    await session.commit()
-                except Exception:
-                    await session.rollback()
-                    raise
-        except Exception:
-            # Compensation must never replace the original processing error.
-            pass
+        async with self.session_factory() as session:
+            try:
+                task = await session.get(IngestionTask, tid)
+                document = await session.get(Document, did)
+                if task is not None:
+                    task.status, task.error = TaskStatus.FAILED, error
+                if document is not None:
+                    document.status, document.error = DocumentStatus.FAILED, error
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
 
     async def run(self, task_id: str | uuid.UUID, document_id: str | uuid.UUID) -> None:
         tid, did = uuid.UUID(str(task_id)), uuid.UUID(str(document_id))
+        parsed_key: str | None = None
+        parsed_written = False
         async with self.session_factory() as session:
             task = await IngestionTaskRepository(session).get(tid)
             if task is None or task.document_id != did or task.status == TaskStatus.COMPLETED:
@@ -92,6 +91,7 @@ class IngestionService:
             source = (await self.storage.get(source_key)).decode("utf-8")
             parsed = json.dumps({"text": source}, ensure_ascii=False).encode()
             await self.storage.put(parsed_key, parsed, "application/json")
+            parsed_written = True
             await self._progress(tid, did, TaskStage.CHUNKING, 40)
             chunks = chunk_text(source)
             await self._progress(tid, did, TaskStage.EMBEDDING, 60)
@@ -129,5 +129,17 @@ class IngestionService:
                     task.completed_at = datetime.now(UTC)
                 await session.commit()
         except Exception as exc:
-            await self._mark_failed(tid, did, str(exc))
+            compensation_failures: list[str] = []
+            try:
+                await self._mark_failed(tid, did, str(exc))
+            except Exception as mark_error:
+                compensation_failures.append(f"failed status: {mark_error}")
+            if parsed_written and parsed_key is not None:
+                try:
+                    await self.storage.delete(parsed_key)
+                except Exception as delete_error:
+                    compensation_failures.append(f"parsed object: {delete_error}")
+            if compensation_failures:
+                details = "; ".join(compensation_failures)
+                raise DocumentCleanupFailedError(f"Ingestion cleanup failed ({details})") from exc
             raise

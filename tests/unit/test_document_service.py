@@ -123,15 +123,18 @@ async def test_database_failure_rolls_back_and_deletes_uploaded_object() -> None
     queue.enqueue.assert_not_awaited()
 
 
-async def test_cleanup_failure_preserves_original_database_error() -> None:
+async def test_cleanup_failure_is_explicit_and_preserves_database_error_as_cause() -> None:
     session = AsyncMock(spec=AsyncSession)
     session.commit.side_effect = RuntimeError("database unavailable")
     storage = AsyncMock()
     storage.delete.side_effect = RuntimeError("cleanup unavailable")
     service, _, _, _, knowledge_base_id, _, _ = make_service(session=session, storage=storage)
 
-    with pytest.raises(RuntimeError, match="database unavailable"):
+    with pytest.raises(DocumentCleanupFailedError, match="uploaded source") as error:
         await service.upload(knowledge_base_id, "readme.md", "text/markdown", b"content")
+
+    assert isinstance(error.value.__cause__, RuntimeError)
+    assert str(error.value.__cause__) == "database unavailable"
 
 
 async def test_rollback_failure_still_deletes_object_and_preserves_commit_error() -> None:

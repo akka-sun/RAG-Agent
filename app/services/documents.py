@@ -217,7 +217,7 @@ class DocumentService:
             await self.documents.add(document)
             await self.tasks.add(task)
             await self._session.commit()
-        except Exception:
+        except Exception as database_error:
             try:
                 await self._session.rollback()
             except Exception:
@@ -227,11 +227,14 @@ class DocumentService:
                 )
             try:
                 await self._storage.delete(document.source_object_key)
-            except Exception:
+            except Exception as cleanup_error:
                 logger.exception(
                     "Failed to delete uploaded object after database failure",
                     extra={"source_object_key": document.source_object_key},
                 )
+                raise DocumentCleanupFailedError(
+                    f"Failed to delete uploaded source object: {cleanup_error}"
+                ) from database_error
             raise
 
         document_id = document.id
