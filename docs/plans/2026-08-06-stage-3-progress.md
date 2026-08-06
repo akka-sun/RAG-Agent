@@ -14,6 +14,7 @@ Completed:
 - Task 7: Multipart upload API and cross-storage compensation behavior.
 - Task 8: Redis shared document index with atomic document-level replacement.
 - Task 9: Idempotent ingestion worker state machine with observable progress.
+- Task 10: Document query, download, retry, and coordinated deletion APIs.
 
 Validation for Task 7: PostgreSQL main/test migrations, 102 unit and integration tests,
 Ruff, and Pyright passed. One existing Starlette deprecation warning remains.
@@ -24,7 +25,9 @@ Ruff, and code review passed.
 Validation for Task 9: 11 targeted state-machine and worker lifecycle tests, Ruff,
 and code review passed.
 
+Validation for Task 10: 125 unit and integration tests, real PostgreSQL retry/delete
+coverage, Ruff, targeted Pyright, and code review passed.
+
 Pending:
 
-- Task 10: Query, download, retry, and delete APIs.
 - Task 11: End-to-end acceptance and learning documentation.
