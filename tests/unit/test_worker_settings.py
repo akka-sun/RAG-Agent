@@ -2,7 +2,7 @@ import asyncio
 
 from app.config import Settings as CompatibilitySettings
 from app.core.config import Settings
-from app.worker import WorkerSettings, health_job
+from app.worker import WorkerSettings, health_job, ingest_document
 
 
 def test_compatibility_settings_import_uses_core_implementation() -> None:
@@ -20,7 +20,7 @@ def test_settings_expose_async_ingestion_services() -> None:
 
 
 def test_worker_registers_health_job_and_redis_settings() -> None:
-    assert WorkerSettings.functions == [health_job]
+    assert WorkerSettings.functions == [health_job, ingest_document]
     assert WorkerSettings.redis_settings.host == "redis"
     assert WorkerSettings.redis_settings.port == 6379
     assert WorkerSettings.redis_settings.database == 0

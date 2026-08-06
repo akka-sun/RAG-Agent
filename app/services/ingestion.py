@@ -14,13 +14,27 @@ from app.repositories.ingestion_tasks import IngestionTaskRepository
 
 
 class IngestionService:
-    def __init__(self, session_factory: Any, storage: Any, index: Any, embedder: Any | None = None) -> None:
+    def __init__(
+        self,
+        session_factory: Any,
+        storage: Any,
+        index: Any,
+        embedder: Any | None = None,
+    ) -> None:
         self.session_factory = session_factory
         self.storage = storage
         self.index = index
         self.embedder = embedder or HashingEmbedder()
 
-    async def _progress(self, tid: uuid.UUID, did: uuid.UUID, stage: TaskStage, progress: int, *, document_status: str | None = None) -> None:
+    async def _progress(
+        self,
+        tid: uuid.UUID,
+        did: uuid.UUID,
+        stage: TaskStage,
+        progress: int,
+        *,
+        document_status: str | None = None,
+    ) -> None:
         async with self.session_factory() as session:
             task = await session.get(IngestionTask, tid)
             document = await session.get(Document, did)
@@ -65,15 +79,19 @@ class IngestionService:
                 if document is None or await session.get(IngestionTask, tid) is None:
                     raise ValueError("ingestion task or document not found")
                 source_key = document.source_object_key
-                parsed_key = document.parsed_object_key or f"{source_key.rsplit('/source/', 1)[0]}/parsed.json"
-            await self._progress(tid, did, TaskStage.PARSING, 20, document_status=DocumentStatus.PROCESSING)
+                parsed_key = document.parsed_object_key or (
+                    f"{source_key.rsplit('/source/', 1)[0]}/parsed.json"
+                )
+            await self._progress(
+                tid,
+                did,
+                TaskStage.PARSING,
+                20,
+                document_status=DocumentStatus.PROCESSING,
+            )
             source = (await self.storage.get(source_key)).decode("utf-8")
-            await self.storage.put(parsed_key, json.dumps({"text": source}, ensure_ascii=False).encode(), "application/json")
-            async with self.session_factory() as session:
-                document = await session.get(Document, did)
-                if document is not None:
-                    document.parsed_object_key = parsed_key
-                await session.commit()
+            parsed = json.dumps({"text": source}, ensure_ascii=False).encode()
+            await self.storage.put(parsed_key, parsed, "application/json")
             await self._progress(tid, did, TaskStage.CHUNKING, 40)
             chunks = chunk_text(source)
             await self._progress(tid, did, TaskStage.EMBEDDING, 60)
@@ -82,16 +100,33 @@ class IngestionService:
                 if document is None:
                     raise ValueError("document not found")
                 kb_id, filename = document.knowledge_base_id, document.filename
-            indexed = [IndexedChunk(kb_id, did, filename, str(c.index), c.text, c.start, c.end, self.embedder.embed(c.text)) for c in chunks]
+            indexed = [
+                IndexedChunk(
+                    kb_id,
+                    did,
+                    filename,
+                    str(chunk.index),
+                    chunk.text,
+                    chunk.start,
+                    chunk.end,
+                    self.embedder.embed(chunk.text),
+                )
+                for chunk in chunks
+            ]
             await self._progress(tid, did, TaskStage.INDEXING, 80)
             await self.index.replace_document(kb_id, did, indexed)
             async with self.session_factory() as session:
                 document = await session.get(Document, did)
                 task = await session.get(IngestionTask, tid)
                 if document is not None:
-                    document.status, document.chunk_count = DocumentStatus.COMPLETED, len(indexed)
+                    document.status = DocumentStatus.COMPLETED
+                    document.parsed_object_key = parsed_key
+                    document.chunk_count = len(indexed)
                 if task is not None:
-                    task.status, task.stage, task.progress, task.completed_at = TaskStatus.COMPLETED, TaskStage.COMPLETED, 100, datetime.now(UTC)
+                    task.status = TaskStatus.COMPLETED
+                    task.stage = TaskStage.COMPLETED
+                    task.progress = 100
+                    task.completed_at = datetime.now(UTC)
                 await session.commit()
         except Exception as exc:
             await self._mark_failed(tid, did, str(exc))

@@ -3,7 +3,7 @@ from minio import Minio
 from redis import Redis
 
 from app.core.config import get_settings
-from app.db import async_session_factory
+from app.db import async_session_factory, engine
 from app.infrastructure.object_storage import MinioObjectStorage
 from app.infrastructure.redis_index import RedisDocumentIndex
 from app.services.ingestion import IngestionService
@@ -28,6 +28,7 @@ async def on_startup(ctx: dict[str, object]) -> None:
         secure=False,
     )
     ctx["redis"] = redis
+    ctx["engine"] = engine
     ctx["ingestion_service"] = IngestionService(
         async_session_factory,
         MinioObjectStorage(minio, settings.minio_bucket),
@@ -39,6 +40,9 @@ async def on_shutdown(ctx: dict[str, object]) -> None:
     redis = ctx.get("redis")
     if redis is not None:
         redis.close()  # type: ignore[union-attr]
+    database_engine = ctx.get("engine")
+    if database_engine is not None:
+        await database_engine.dispose()  # type: ignore[union-attr]
 
 
 class WorkerSettings:
