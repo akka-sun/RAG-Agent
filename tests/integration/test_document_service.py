@@ -290,3 +290,119 @@ async def test_delete_external_failure_preserves_real_database_record(
         await service.delete(knowledge_base_id, document_id)
 
     assert await DocumentRepository(db_session).get(document_id) is not None
+
+
+async def test_retry_enqueue_failure_releases_unique_slot_for_next_retry(
+    db_session: AsyncSession,
+) -> None:
+    knowledge_base = KnowledgeBase(
+        name=f"retry-recovery-{uuid.uuid4()}",
+        description="",
+        embedding_model="hashing",
+        embedding_dimension=64,
+    )
+    document = Document(
+        knowledge_base=knowledge_base,
+        filename="notes.md",
+        content_type="text/markdown",
+        size_bytes=5,
+        source_object_key="source",
+        status=DocumentStatus.FAILED,
+        error="previous failure",
+    )
+    db_session.add_all([knowledge_base, document])
+    await db_session.commit()
+    document_id = document.id
+    knowledge_base_id = knowledge_base.id
+
+    def service(queue: FixedQueue) -> DocumentService:
+        return DocumentService(
+            KnowledgeBaseRepository(db_session),
+            DocumentRepository(db_session),
+            IngestionTaskRepository(db_session),
+            db_session,
+            MemoryStorage(),
+            queue,
+        )
+
+    with pytest.raises(IngestionQueueUnavailableError):
+        await service(FixedQueue(RuntimeError("redis unavailable"))).retry(
+            knowledge_base_id, document_id
+        )
+
+    db_session.expire_all()
+    failed_document = await DocumentRepository(db_session).get(document_id)
+    failed_tasks = list(
+        (
+            await db_session.scalars(
+                select(IngestionTask).where(IngestionTask.document_id == document_id)
+            )
+        ).all()
+    )
+    assert failed_document is not None
+    assert failed_document.status == DocumentStatus.FAILED
+    assert failed_document.error == "redis unavailable"
+    assert len(failed_tasks) == 1
+    assert failed_tasks[0].status == TaskStatus.FAILED
+    assert failed_tasks[0].error == "redis unavailable"
+
+    successful_task = await service(FixedQueue()).retry(knowledge_base_id, document_id)
+
+    assert successful_task.status == TaskStatus.PENDING
+    tasks = list(
+        (
+            await db_session.scalars(
+                select(IngestionTask)
+                .where(IngestionTask.document_id == document_id)
+                .order_by(IngestionTask.created_at)
+            )
+        ).all()
+    )
+    assert [task.status for task in tasks] == [TaskStatus.FAILED, TaskStatus.PENDING]
+
+
+async def test_delete_removes_real_database_history_and_all_external_state(
+    db_session: AsyncSession,
+) -> None:
+    knowledge_base = KnowledgeBase(
+        name=f"delete-success-{uuid.uuid4()}",
+        description="",
+        embedding_model="hashing",
+        embedding_dimension=64,
+    )
+    document = Document(
+        knowledge_base=knowledge_base,
+        filename="notes.md",
+        content_type="text/markdown",
+        size_bytes=5,
+        source_object_key="source",
+        parsed_object_key="parsed",
+        status=DocumentStatus.COMPLETED,
+    )
+    task = IngestionTask(document=document, status=TaskStatus.COMPLETED)
+    db_session.add_all([knowledge_base, document, task])
+    await db_session.commit()
+    document_id = document.id
+    task_id = task.id
+    knowledge_base_id = knowledge_base.id
+    storage = MemoryStorage()
+    storage.objects = {"source": b"notes", "parsed": b"{}"}
+    index = MemoryIndex()
+    index.documents.add((knowledge_base_id, document_id))
+    service = DocumentService(
+        KnowledgeBaseRepository(db_session),
+        DocumentRepository(db_session),
+        IngestionTaskRepository(db_session),
+        db_session,
+        storage,
+        FixedQueue(),
+        index,
+    )
+
+    await service.delete(knowledge_base_id, document_id)
+
+    assert await DocumentRepository(db_session).get(document_id) is None
+    assert await IngestionTaskRepository(db_session).get(task_id) is None
+    assert (knowledge_base_id, document_id) not in index.documents
+    assert "parsed" not in storage.objects
+    assert "source" not in storage.objects
