@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator
 
 import pytest
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
@@ -26,22 +27,26 @@ async def db_session() -> AsyncIterator[AsyncSession]:
 
     try:
         async with test_session_factory() as session:
-            await session.execute(text("TRUNCATE TABLE knowledge_bases"))
+            await session.execute(
+                text("TRUNCATE TABLE ingestion_tasks, documents, knowledge_bases")
+            )
             await session.commit()
 
             yield session
 
             await session.rollback()
-            await session.execute(text("TRUNCATE TABLE knowledge_bases"))
+            await session.execute(
+                text("TRUNCATE TABLE ingestion_tasks, documents, knowledge_bases")
+            )
             await session.commit()
     finally:
         await test_engine.dispose()
 
 
 @pytest.fixture
-async def client(
+def app(
     db_session: AsyncSession,
-) -> AsyncIterator[AsyncClient]:
+) -> FastAPI:
     app = create_app()
     rag_store = InMemoryVectorStore()
 
@@ -53,6 +58,12 @@ async def client(
 
     app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_rag_store] = override_rag_store
+
+    return app
+
+
+@pytest.fixture
+async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
 
     transport = ASGITransport(app=app)
 

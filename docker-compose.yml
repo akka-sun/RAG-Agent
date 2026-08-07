@@ -3,19 +3,23 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: rag-agent-api-dev
     working_dir: /app
     volumes:
       - .:/app
-      - api_venv:/app/.venv
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${RAG_AGENT_API_PORT:-8000}:8000"
     env_file:
       - path: .env
         required: false
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     command: >
       uv run --no-sync uvicorn app.main:app
       --host 0.0.0.0
@@ -35,23 +39,99 @@ services:
 
   postgres:
     image: postgres:18-alpine
-    container_name: rag-agent-postgres-dev
     environment:
-      POSTGRES_USER: rag_agent
-      POSTGRES_PASSWORD: rag_agent
-      POSTGRES_DB: rag_agent
+      POSTGRES_USER: ${RAG_AGENT_POSTGRES_USER:-rag_agent}
+      POSTGRES_PASSWORD: ${RAG_AGENT_POSTGRES_PASSWORD:-rag_agent}
+      POSTGRES_DB: ${RAG_AGENT_POSTGRES_DB:-rag_agent}
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${RAG_AGENT_POSTGRES_EXPOSED_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
       - ./docker/postgres/init-test-db.sql:/docker-entrypoint-initdb.d/10-init-test-db.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U rag_agent -d rag_agent"]
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
       interval: 5s
       timeout: 3s
       retries: 10
       start_period: 5s
 
+  redis:
+    image: redis:8-alpine
+    ports:
+      - "127.0.0.1:${RAG_AGENT_REDIS_EXPOSED_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${RAG_AGENT_MINIO_ACCESS_KEY:-rag-agent}
+      MINIO_ROOT_PASSWORD: ${RAG_AGENT_MINIO_SECRET_KEY:-rag-agent-secret}
+    ports:
+      - "127.0.0.1:${RAG_AGENT_MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${RAG_AGENT_MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  minio-init:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${RAG_AGENT_MINIO_ACCESS_KEY:-rag-agent}
+      MINIO_ROOT_PASSWORD: ${RAG_AGENT_MINIO_SECRET_KEY:-rag-agent-secret}
+      MINIO_BUCKET: ${RAG_AGENT_MINIO_BUCKET:-rag-agent}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+        && mc mb --ignore-existing "local/$${MINIO_BUCKET}"
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /app
+    volumes:
+      - .:/app
+    env_file:
+      - path: .env
+        required: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    command: ["uv", "run", "--no-sync", "arq", "app.worker.WorkerSettings"]
+    healthcheck:
+      test: ["CMD", "uv", "run", "--no-sync", "arq", "--check", "app.worker.WorkerSettings"]
+      interval: 30s
+      timeout: 20s
+      retries: 10
+      start_period: 5s
+
 volumes:
-  api_venv:
+  minio_data:
   postgres_data:
+  redis_data:

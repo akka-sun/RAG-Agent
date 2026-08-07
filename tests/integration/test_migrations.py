@@ -19,3 +19,23 @@ async def test_migration_creates_knowledge_bases_table() -> None:
             assert result.scalar_one() is True
     finally:
         await engine.dispose()
+
+
+async def test_migration_creates_unique_active_task_index() -> None:
+    engine = create_async_engine(get_settings().test_database_url)
+    try:
+        async with engine.connect() as connection:
+            result = await connection.execute(
+                text(
+                    "SELECT indexdef FROM pg_indexes "
+                    "WHERE schemaname = 'public' "
+                    "AND indexname = 'uq_ingestion_tasks_active_document'"
+                )
+            )
+            definition = result.scalar_one()
+            assert "UNIQUE INDEX" in definition
+            assert "status" in definition
+            assert "pending" in definition
+            assert "processing" in definition
+    finally:
+        await engine.dispose()
