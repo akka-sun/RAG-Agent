@@ -86,7 +86,7 @@ docker compose exec api uv run --no-sync alembic upgrade head
 检查容器与健康状态，并验证 API 存活：
 
 ```powershell
-docker compose ps
+docker compose ps --all
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/health/live
 ```
 
