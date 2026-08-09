@@ -1,6 +1,6 @@
 from collections.abc import AsyncIterator
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, cast
 from uuid import UUID
 
 from arq.connections import RedisSettings, create_pool
@@ -8,9 +8,13 @@ from fastapi import Depends
 from minio import Minio
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.checkpoint import create_async_checkpointer
+from app.agent.graph import build_agent_graph
+from app.agent.tools import RetrievalTool
 from app.config import get_settings
 from app.core.exceptions import IngestionQueueUnavailableError
 from app.db import get_session
+from app.infrastructure.chat_client import ChatClient
 from app.infrastructure.milvus_store import MilvusChunkStore, MilvusDocumentIndex
 from app.infrastructure.model_clients import EmbeddingClient, RerankerClient
 from app.infrastructure.object_storage import MinioObjectStorage, ObjectStorage
@@ -22,6 +26,7 @@ from app.repositories.ingestion_tasks import IngestionTaskRepository
 from app.repositories.knowledge_base import (
     KnowledgeBaseRepository,
 )
+from app.services.agent_chat import AgentChatService, AgentGraphProtocol
 from app.services.documents import DocumentService
 from app.services.knowledge_base import (
     KnowledgeBaseService,
@@ -223,6 +228,21 @@ EmbeddingClientDependency = Annotated[
 ]
 
 
+def get_chat_client() -> ChatClient:
+    settings = get_settings()
+    return ChatClient(
+        base_url=settings.chat_base_url,
+        api_key=settings.chat_api_key,
+        model=settings.chat_model,
+    )
+
+
+ChatClientDependency = Annotated[
+    ChatClient,
+    Depends(get_chat_client),
+]
+
+
 def get_reranker_client() -> RerankerClient:
     settings = get_settings()
     return RerankerClient(
@@ -253,4 +273,29 @@ def get_retrieval_service(
 HybridRetrievalServiceDependency = Annotated[
     HybridRetrievalService,
     Depends(get_retrieval_service),
+]
+
+
+async def get_agent_chat_service(
+    chat_client: ChatClientDependency,
+    retrieval_service: HybridRetrievalServiceDependency,
+) -> AsyncIterator[AgentChatService]:
+    settings = get_settings()
+    retrieval_tool = RetrievalTool(service=retrieval_service, limit=3)
+    async with create_async_checkpointer(
+        settings.database_url,
+        strict_msgpack=settings.langgraph_strict_msgpack,
+    ) as checkpointer:
+        graph = build_agent_graph(
+            chat_client=chat_client,
+            retrieval_tool=retrieval_tool,
+            max_retrievals=settings.agent_max_retrievals,
+            checkpointer=checkpointer,
+        )
+        yield AgentChatService(graph=cast(AgentGraphProtocol, graph))
+
+
+AgentChatServiceDependency = Annotated[
+    AgentChatService,
+    Depends(get_agent_chat_service),
 ]

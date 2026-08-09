@@ -28,6 +28,7 @@ def build_agent_graph(
     chat_client: ChatClientProtocol,
     retrieval_tool: RetrievalToolProtocol,
     max_retrievals: int,
+    checkpointer: Any | None = None,
 ) -> CompiledStateGraph[Any, Any, Any, Any]:
     retrieval_limit = max(max_retrievals, 0)
     graph = StateGraph(AgentState)
@@ -164,7 +165,7 @@ def build_agent_graph(
         {"retrieve": "retrieve", "generate": "generate"},
     )
     graph.add_edge("generate", END)
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
 
 
 def _query_from_state(state: AgentState) -> str:

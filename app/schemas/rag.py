@@ -82,3 +82,11 @@ class RAGSourceResponse(BaseModel):
 class RAGQueryResponse(BaseModel):
     answer: str
     sources: list[RAGSourceResponse]
+
+
+class AgentQueryRequest(RAGQueryRequest):
+    pass
+
+
+class AgentQueryResponse(RAGQueryResponse):
+    pass

@@ -1,9 +1,11 @@
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
 
+from app.agent.state import AgentEvidence
 from app.api import dependencies
 from app.services.retrieval import RetrievalAnswerContext, RetrievalEvidence
 
@@ -24,6 +26,29 @@ class FakeHybridRetrievalService:
             answer="根据检索到的资料：\n[S1] refunds are available",
             evidence=[
                 RetrievalEvidence(
+                    label="S1",
+                    document_id=DOCUMENT_ID,
+                    filename="policy.md",
+                    chunk_id="chunk-1",
+                    text="refunds are available",
+                    start=0,
+                    end=21,
+                    score=0.95,
+                )
+            ],
+        )
+
+
+class FakeAgentChatService:
+    def __init__(self) -> None:
+        self.calls: list[tuple[uuid.UUID, str]] = []
+
+    async def answer(self, *, knowledge_base_id: uuid.UUID, query: str) -> SimpleNamespace:
+        self.calls.append((knowledge_base_id, query))
+        return SimpleNamespace(
+            content="agent answer",
+            citations=[
+                AgentEvidence(
                     label="S1",
                     document_id=DOCUMENT_ID,
                     filename="policy.md",
@@ -112,6 +137,34 @@ async def test_rag_query_returns_empty_result_without_evidence(
         "answer": "未找到相关证据。",
         "sources": [],
     }
+
+
+@pytest.mark.integration
+async def test_agent_query_returns_citations_from_agent_service(
+    app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    agent = FakeAgentChatService()
+    if hasattr(dependencies, "get_agent_chat_service"):
+        app.dependency_overrides[dependencies.get_agent_chat_service] = lambda: agent
+    knowledge_base_id = await create_knowledge_base(
+        client,
+        "Agent RAG API",
+    )
+
+    query_response = await client.post(
+        "/api/v1/rag/agent/query",
+        json={
+            "knowledge_base_id": knowledge_base_id,
+            "query": "refund policy",
+        },
+    )
+
+    assert query_response.status_code == 200
+    result = query_response.json()
+    assert result["answer"] == "agent answer"
+    assert result["sources"][0]["label"] == "S1"
+    assert agent.calls == [(uuid.UUID(knowledge_base_id), "refund policy")]
 
 
 @pytest.mark.integration
