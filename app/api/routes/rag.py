@@ -1,12 +1,17 @@
 from fastapi import APIRouter, status
 
-from app.api.dependencies import RAGServiceDependency
+from app.api.dependencies import (
+    HybridRetrievalServiceDependency,
+    KnowledgeBaseServiceDependency,
+    RAGServiceDependency,
+)
 from app.schemas.errors import ErrorResponse
 from app.schemas.rag import (
     RAGDocumentCreate,
     RAGDocumentResponse,
     RAGQueryRequest,
     RAGQueryResponse,
+    RAGSourceResponse,
 )
 
 router = APIRouter(
@@ -41,6 +46,28 @@ async def ingest_document(
 )
 async def query_rag(
     data: RAGQueryRequest,
-    service: RAGServiceDependency,
+    knowledge_base_service: KnowledgeBaseServiceDependency,
+    service: HybridRetrievalServiceDependency,
 ) -> RAGQueryResponse:
-    return await service.query(data)
+    await knowledge_base_service.get(data.knowledge_base_id)
+    context = await service.query(
+        knowledge_base_id=data.knowledge_base_id,
+        query=data.query,
+        limit=data.top_k,
+    )
+    return RAGQueryResponse(
+        answer=context.answer,
+        sources=[
+            RAGSourceResponse(
+                label=item.label,
+                document_id=item.document_id,
+                filename=item.filename,
+                chunk_id=item.chunk_id,
+                text=item.text,
+                start=item.start,
+                end=item.end,
+                score=item.score,
+            )
+            for item in context.evidence
+        ],
+    )

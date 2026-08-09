@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.core.exceptions import IngestionQueueUnavailableError
 from app.db import get_session
+from app.infrastructure.milvus_store import MilvusChunkStore
+from app.infrastructure.model_clients import EmbeddingClient, RerankerClient
 from app.infrastructure.object_storage import MinioObjectStorage, ObjectStorage
 from app.infrastructure.queue import ArqIngestionQueue, IngestionQueue
 from app.infrastructure.redis_index import RedisDocumentIndex
@@ -27,6 +29,7 @@ from app.services.knowledge_base import (
     KnowledgeBaseService,
 )
 from app.services.rag import RAGService
+from app.services.retrieval import HybridRetrievalService
 
 SessionDependency = Annotated[
     AsyncSession,
@@ -184,4 +187,75 @@ def get_rag_service(
 RAGServiceDependency = Annotated[
     RAGService,
     Depends(get_rag_service),
+]
+
+
+@lru_cache
+def get_milvus_chunk_store_instance() -> MilvusChunkStore:
+    settings = get_settings()
+    return MilvusChunkStore(
+        uri=settings.milvus_uri,
+        token=settings.milvus_token,
+        collection_name=settings.milvus_collection,
+        embedding_dimension=settings.embedding_dimension,
+    )
+
+
+async def get_milvus_chunk_store() -> MilvusChunkStore:
+    store = get_milvus_chunk_store_instance()
+    await store.ensure_collection()
+    return store
+
+
+MilvusChunkStoreDependency = Annotated[
+    MilvusChunkStore,
+    Depends(get_milvus_chunk_store),
+]
+
+
+def get_embedding_client() -> EmbeddingClient:
+    settings = get_settings()
+    return EmbeddingClient(
+        base_url=settings.embedding_base_url,
+        api_key=settings.embedding_api_key,
+        model=settings.embedding_model,
+    )
+
+
+EmbeddingClientDependency = Annotated[
+    EmbeddingClient,
+    Depends(get_embedding_client),
+]
+
+
+def get_reranker_client() -> RerankerClient:
+    settings = get_settings()
+    return RerankerClient(
+        base_url=settings.rerank_base_url,
+        api_key=settings.rerank_api_key,
+        model=settings.rerank_model,
+    )
+
+
+RerankerClientDependency = Annotated[
+    RerankerClient,
+    Depends(get_reranker_client),
+]
+
+
+def get_retrieval_service(
+    store: MilvusChunkStoreDependency,
+    embeddings: EmbeddingClientDependency,
+    reranker: RerankerClientDependency,
+) -> HybridRetrievalService:
+    return HybridRetrievalService(
+        store=store,
+        embeddings=embeddings,
+        reranker=reranker,
+    )
+
+
+HybridRetrievalServiceDependency = Annotated[
+    HybridRetrievalService,
+    Depends(get_retrieval_service),
 ]
