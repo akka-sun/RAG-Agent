@@ -6,6 +6,15 @@ ParserName = Literal["local", "mineru", "paddlex"]
 SourceFormat = Literal["md", "txt", "pdf"]
 
 
+class ParserServiceError(RuntimeError):
+    def __init__(self, parser: str, status_code: int | None, message: str) -> None:
+        status = f" status={status_code}" if status_code is not None else ""
+        super().__init__(f"{parser} parser failed{status}: {message}")
+        self.parser = parser
+        self.status_code = status_code
+        self.message = message
+
+
 class ParsedBlock(BaseModel):
     model_config = ConfigDict(frozen=True)
 
