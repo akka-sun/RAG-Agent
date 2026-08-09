@@ -1095,17 +1095,20 @@ from app.rag.store import InMemoryVectorStore
 并在 `client` fixture 中为每个测试创建和覆盖 Store：
 
 ```python
-    app = create_app()
-    rag_store = InMemoryVectorStore()
+app = create_app()
+rag_store = InMemoryVectorStore()
 
-    async def override_session() -> AsyncIterator[AsyncSession]:
-        yield db_session
 
-    def override_rag_store() -> InMemoryVectorStore:
-        return rag_store
+async def override_session() -> AsyncIterator[AsyncSession]:
+    yield db_session
 
-    app.dependency_overrides[get_session] = override_session
-    app.dependency_overrides[get_rag_store] = override_rag_store
+
+def override_rag_store() -> InMemoryVectorStore:
+    return rag_store
+
+
+app.dependency_overrides[get_session] = override_session
+app.dependency_overrides[get_rag_store] = override_rag_store
 ```
 
 - [ ] **Step 5: 创建薄 RAG Route**

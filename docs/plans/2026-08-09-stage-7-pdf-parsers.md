@@ -276,7 +276,9 @@ git commit -m "feat: 接入 MinerU 与 PaddleX PDF 解析器"
 
 ```python
 def test_pdf_uses_explicit_parser():
-    router = ParserRouter(default_pdf_parser="mineru", mineru=MinerUParserFake(), paddlex=PaddleXParserFake())
+    router = ParserRouter(
+        default_pdf_parser="mineru", mineru=MinerUParserFake(), paddlex=PaddleXParserFake()
+    )
 
     assert router.select("paper.pdf", parser="paddlex").name == "paddlex"
 
@@ -334,7 +336,9 @@ def test_chunk_parsed_document_preserves_page_metadata():
     parsed = ParsedDocument(
         parser="mineru",
         source_format="pdf",
-        blocks=[ParsedBlock(text="A long paragraph about retention.", page_number=2, block_index=0)],
+        blocks=[
+            ParsedBlock(text="A long paragraph about retention.", page_number=2, block_index=0)
+        ],
     )
 
     chunks = chunk_parsed_document(parsed, document_id=uuid.uuid4())

@@ -64,7 +64,9 @@ def test_load_dataset_validates_expected_documents(tmp_path):
                         "id": "q1",
                         "question": "What is the retention policy?",
                         "expected_document_ids": ["00000000-0000-0000-0000-000000000001"],
-                        "expected_citations": [{"document_id": "00000000-0000-0000-0000-000000000001"}],
+                        "expected_citations": [
+                            {"document_id": "00000000-0000-0000-0000-000000000001"}
+                        ],
                     }
                 ]
             }
@@ -75,7 +77,9 @@ def test_load_dataset_validates_expected_documents(tmp_path):
     dataset = load_dataset(path)
 
     assert dataset.questions[0].id == "q1"
-    assert dataset.questions[0].expected_document_ids[0] == uuid.UUID("00000000-0000-0000-0000-000000000001")
+    assert dataset.questions[0].expected_document_ids[0] == uuid.UUID(
+        "00000000-0000-0000-0000-000000000001"
+    )
 ```
 
 - [ ] **Step 2: Run failing test**

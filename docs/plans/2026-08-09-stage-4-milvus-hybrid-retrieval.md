@@ -143,12 +143,20 @@ git commit -m "feat: 配置 Milvus 与外部检索服务"
 ```python
 def test_fuse_rrf_prefers_chunk_present_in_both_paths():
     dense = [
-        RetrievedChunk(chunk_id="a", document_id="d1", text="dense a", rank=1, score=0.9, source="dense"),
-        RetrievedChunk(chunk_id="b", document_id="d1", text="dense b", rank=2, score=0.8, source="dense"),
+        RetrievedChunk(
+            chunk_id="a", document_id="d1", text="dense a", rank=1, score=0.9, source="dense"
+        ),
+        RetrievedChunk(
+            chunk_id="b", document_id="d1", text="dense b", rank=2, score=0.8, source="dense"
+        ),
     ]
     sparse = [
-        RetrievedChunk(chunk_id="b", document_id="d1", text="sparse b", rank=1, score=12.0, source="sparse"),
-        RetrievedChunk(chunk_id="c", document_id="d1", text="sparse c", rank=2, score=8.0, source="sparse"),
+        RetrievedChunk(
+            chunk_id="b", document_id="d1", text="sparse b", rank=1, score=12.0, source="sparse"
+        ),
+        RetrievedChunk(
+            chunk_id="c", document_id="d1", text="sparse c", rank=2, score=8.0, source="sparse"
+        ),
     ]
 
     fused = fuse_rrf(dense, sparse, limit=3)
@@ -315,7 +323,9 @@ git commit -m "feat: 接入真实 Embedding 与 Reranker 客户端"
 ```python
 async def test_hybrid_retrieval_filters_by_knowledge_base():
     store = FakeMilvusStore()
-    service = HybridRetrievalService(store=store, embeddings=FakeEmbeddingClient(), reranker=FakeReranker())
+    service = HybridRetrievalService(
+        store=store, embeddings=FakeEmbeddingClient(), reranker=FakeReranker()
+    )
     kb_id = uuid.uuid4()
 
     await service.query(knowledge_base_id=kb_id, query="refund policy", limit=5)

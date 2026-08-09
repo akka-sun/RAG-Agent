@@ -27,9 +27,7 @@ def upgrade() -> None:
             server_default=sa.text("'pending'"),
             nullable=False,
         ),
-        sa.Column(
-            "chunk_count", sa.Integer(), server_default=sa.text("0"), nullable=False
-        ),
+        sa.Column("chunk_count", sa.Integer(), server_default=sa.text("0"), nullable=False),
         sa.Column("error", sa.Text(), nullable=True),
         sa.Column(
             "created_at",
@@ -93,8 +91,7 @@ def upgrade() -> None:
             name=op.f("ck_ingestion_tasks_progress_range"),
         ),
         sa.CheckConstraint(
-            "stage IN ('queued', 'parsing', 'chunking', 'embedding', "
-            "'indexing', 'completed')",
+            "stage IN ('queued', 'parsing', 'chunking', 'embedding', 'indexing', 'completed')",
             name=op.f("ck_ingestion_tasks_stage_valid"),
         ),
         sa.CheckConstraint(

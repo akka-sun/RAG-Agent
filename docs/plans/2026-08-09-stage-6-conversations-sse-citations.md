@@ -124,7 +124,9 @@ async def test_add_assistant_message_rolls_back_invalid_citation(db_session):
         await repo.add_assistant_message_with_citations(
             conversation_id=conversation.id,
             content="answer [S1]",
-            citations=[MessageCitationInput(source_label="S2", document_id=uuid.uuid4(), chunk_id="c1")],
+            citations=[
+                MessageCitationInput(source_label="S2", document_id=uuid.uuid4(), chunk_id="c1")
+            ],
             valid_labels={"S1"},
         )
 
@@ -178,7 +180,9 @@ def test_conversation_title_trims_whitespace():
 
 
 async def test_create_conversation_requires_existing_knowledge_base():
-    service = ConversationService(knowledge_bases=MissingKnowledgeBaseRepo(), conversations=FakeConversationRepo())
+    service = ConversationService(
+        knowledge_bases=MissingKnowledgeBaseRepo(), conversations=FakeConversationRepo()
+    )
 
     with pytest.raises(KnowledgeBaseNotFoundError):
         await service.create(knowledge_base_id=uuid.uuid4(), title="Chat")
