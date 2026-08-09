@@ -68,7 +68,8 @@ class ChatClient:
             msg = "chat response must contain at least one choice"
             raise ValueError(msg)
 
-        content = _message_content(choices[0])
+        choice_items = cast(list[object], choices)
+        content = _message_content(choice_items[0])
         usage = data.get("usage")
         total_tokens = _total_tokens(usage)
         return ChatCompletionResult(content=content, total_tokens=total_tokens)

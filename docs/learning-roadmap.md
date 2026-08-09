@@ -276,10 +276,11 @@
 | 2026-07-20 | 阶段 1 | PostgreSQL、异步 ORM、Alembic、知识库 CRUD、统一错误响应 | 空库迁移至唯一 head、10 个单元测试和 5 个集成测试通过、Ruff 与 Pyright 通过、真实 HTTP CRUD 返回 201/200/200/204 | flush、commit、rollback、refresh 与 Service 事务边界 | 完整请求链路、Route/Service/Repository 职责、Engine/连接池/Connection/Session、并发唯一约束、Alembic 与 create_all、单元与集成测试分层 |
 | 2026-07-24 | 阶段 2 | Markdown/TXT 字符分块、确定性 Hashing Embedding、余弦检索、进程内知识库隔离、引用回答与最小 RAG API | 31 个单元测试和 8 个集成测试通过、Ruff 与 Pyright 通过、真实 HTTP 创建/摄取/查询/删除返回 201/201/200/204、引用文档 ID 一致 | chunk size 与 overlap 取舍、归一化向量点积、Hashing 与语义 Embedding 的边界、召回与生成问题区分、检索前知识库隔离 | 完整摄取调用链、进程内 Store 的多进程与持久化边界、查询链路中的引用组装细节 |
 | 2026-08-09 | 阶段 4 | Milvus standalone Docker、PyMilvus Collection/BM25、Dense+BM25 双路召回、RRF 融合、远程 Embedding/Reranker 客户端、worker 写入 Milvus、retry/delete 清理 Milvus、`/rag/query` 混合检索接线 | `docker compose config --quiet` 通过；Milvus 真实集成测试通过；阶段 4 相关 32 个 unit/integration/e2e 测试通过；外部模型测试默认 skip，待配置真实 key 后运行 `pytest -m external` | Milvus schema/index/BM25 Function、知识库过滤、RRF 不混加原始分、PyMilvus 删除后 flush、默认测试与真实外部 API 验证分层 | 真实 Reranker 服务响应差异、生产 Embedding 维度迁移、LangGraph Agent 如何消费检索证据 |
+| 2026-08-09 | 阶段 5 | LangGraph Agent、OpenAI-compatible ChatClient、检索/直答分类、查询改写、最多三次检索循环、PostgreSQL Checkpointer、`/rag/agent/query` 接口 | Chat 客户端单元测试通过；外部 Chat API 测试默认 skip；LangGraph loop-limit 与 direct-answer 测试通过；PostgreSQL checkpoint 真实写入/读回通过；RAG Agent API 集成测试通过 | Agent state/node/edge、工具循环上限、Chat API 边界、SQLAlchemy URL 密码渲染、LangGraph checkpoint 生命周期 | 会话级 thread 复用、SSE token 事件、引用快照落库、真实 Chat 模型提示词稳定性 |
 
 ## 5. 当前任务
 
-下一步进入阶段 5：在 Milvus 混合检索基础上接入 LangGraph Agent、真实 Chat API 和 PostgreSQL Checkpointer，完成可恢复的 Agentic RAG 回答链路。
+下一步进入阶段 6：在 LangGraph Agent 基础上增加会话、消息持久化、SSE 流式输出与引用快照落库，让回答过程可以被前端实时消费并在刷新后恢复。
 
 ## 6. 阶段 3 验收记录（2026-08-06）
 
@@ -317,3 +318,22 @@
 6. **为什么 worker 保留本地 Hashing fallback？** 这是开发/测试模式的明确安全路径；生产或配置了 API key 时使用真实 OpenAI-compatible EmbeddingClient，避免默认本地测试依赖付费服务。
 
 下一次复习时，请手算一个 dense 排名 `[a,b]` 与 BM25 排名 `[b,c]` 的 RRF 融合结果，并解释为什么 `b` 会排在最前。
+
+## 8. 阶段 5 验收记录（2026-08-09）
+
+阶段 5 已在阶段 4 混合检索基础上接入 LangGraph Agent。Agent 图包含分类、查询改写、检索、证据判断和生成节点；模型通过 OpenAI-compatible Chat API 调用，检索工具复用 `HybridRetrievalService`，图状态通过 PostgreSQL checkpointer 持久化。
+
+阶段 5 已验证以下链路：ChatClient 向 `/chat/completions` 发送 OpenAI-compatible payload 并解析 token usage；Agent 可判断直接回答路径且不调用检索；当模型持续要求更多证据时，图最多执行三次检索并返回证据不足；FastAPI 启动时设置 `LANGGRAPH_STRICT_MSGPACK=true` 并初始化 LangGraph checkpoint 表；真实测试 PostgreSQL 可写入并读回 checkpoint；`/rag/agent/query` 会先校验知识库，再通过 AgentChatService 返回回答和 `[S1]` 引用。
+
+验证证据只记录实际执行结果：checkpoint 集成测试使用 Docker PostgreSQL 真实写入/读回；RAG Agent API 集成测试通过依赖替换验证路由、知识库校验和引用响应结构；外部 Chat API 测试已加 `external` 标记，默认跳过，配置真实凭据后使用 `docker compose exec api uv run --no-sync pytest -m external -v` 验证。
+
+### 学习复盘
+
+1. **为什么 Agent 要先分类是否检索？** 不是所有问题都需要知识库；直接回答可以减少延迟和模型/检索成本，也避免把闲聊类问题硬塞进检索链路。
+2. **为什么检索循环必须有硬上限？** LLM 的“还需要更多证据”是模型输出，不是系统不变量；没有上限时会导致无限工具调用、费用失控和请求悬挂。
+3. **为什么查询改写独立成节点？** 用户原问题可能包含口语、省略或多意图；检索查询应尽量短、明确、面向召回，而最终回答仍保留原始用户意图。
+4. **为什么 checkpoint 使用 PostgreSQL？** 当前业务状态已经在 PostgreSQL 中，checkpoint 同库保存便于事务性运维、备份和后续会话恢复；同时避免为图状态再引入一套额外基础设施。
+5. **为什么 SQLAlchemy URL 不能直接 `str()` 后交给 psycopg？** SQLAlchemy 的 `str(URL)` 会隐藏密码；传给真实数据库驱动会导致认证失败，内部连接串必须使用 `render_as_string(hide_password=False)`。
+6. **为什么外部 Chat API 测试默认 skip？** 默认质量门禁必须可重复且不消耗额度；真实模型连通性属于显式生产验收，必须由真实凭据和 `RAG_AGENT_EXTERNAL_TESTS_ENABLED=true` 开启。
+
+下一次复习时，请不看代码画出 Agent 图的五个节点，并说明每个节点读取哪些状态、写入哪些状态，以及哪条边阻止无限检索。
