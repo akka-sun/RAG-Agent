@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     mineru_base_url: str = "http://mineru:8000"
     paddlex_base_url: str = "http://paddlex:8080"
     default_pdf_parser: Literal["mineru", "paddlex"] = "mineru"
+    langfuse_base_url: str = ""
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_environment: str = "default"
 
     @property
     def database_url(self) -> URL:

@@ -1,3 +1,4 @@
+import logging
 from typing import Any, cast
 
 from arq.connections import RedisSettings
@@ -9,16 +10,27 @@ from app.db import async_session_factory, engine
 from app.infrastructure.milvus_store import MilvusChunkStore, MilvusDocumentIndex
 from app.infrastructure.model_clients import EmbeddingClient
 from app.infrastructure.object_storage import MinioObjectStorage
+from app.observability import clear_trace_context, configure_logging, set_trace_context
 from app.parsers.mineru import MinerUParser
 from app.parsers.paddlex import PaddleXParser
 from app.parsers.router import ParserRouter
 from app.rag.embedding import HashingEmbedder
 from app.services.ingestion import IngestionService
 
+logger = logging.getLogger(__name__)
+
 
 async def ingest_document(ctx: dict[str, object], task_id: str, document_id: str) -> None:
     service = ctx["ingestion_service"]
-    await service.run(task_id, document_id)  # type: ignore[union-attr]
+    token = set_trace_context(
+        trace_id=task_id, task_id=task_id, document_id=document_id, stage="worker"
+    )
+    logger.info("worker ingest job started")
+    try:
+        await service.run(task_id, document_id)  # type: ignore[union-attr]
+    finally:
+        logger.info("worker ingest job finished")
+        clear_trace_context(token)
 
 
 async def health_job(ctx: dict[str, object]) -> str:
@@ -55,6 +67,7 @@ def build_parser_router(settings: Settings) -> ParserRouter:
 
 
 async def on_startup(ctx: dict[str, object]) -> None:
+    configure_logging()
     settings = get_settings()
     redis = cast(Any, Redis).from_url(settings.redis_url)
     minio = Minio(

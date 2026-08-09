@@ -88,3 +88,18 @@ def test_stage7_parser_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
     assert settings.mineru_base_url == "http://mineru:8000"
     assert settings.paddlex_base_url == "http://paddlex:8080"
     assert settings.default_pdf_parser == "mineru"
+
+
+def test_stage8_langfuse_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RAG_AGENT_LANGFUSE_BASE_URL", "https://langfuse.example.test")
+    monkeypatch.setenv("RAG_AGENT_LANGFUSE_PUBLIC_KEY", "pk-test")
+    monkeypatch.setenv("RAG_AGENT_LANGFUSE_SECRET_KEY", "sk-test")
+    monkeypatch.setenv("RAG_AGENT_LANGFUSE_ENVIRONMENT", "staging")
+
+    settings = Settings()
+
+    assert settings.langfuse_base_url == "https://langfuse.example.test"
+    assert settings.langfuse_public_key == "pk-test"
+    assert settings.langfuse_secret_key == "sk-test"
+    assert settings.langfuse_environment == "staging"

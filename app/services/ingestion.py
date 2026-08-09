@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -8,12 +9,15 @@ from typing import Any, Protocol
 from app.core.exceptions import DocumentCleanupFailedError
 from app.models.document import Document, DocumentStatus
 from app.models.ingestion_task import IngestionTask, TaskStage, TaskStatus
+from app.observability import get_langfuse_tracer, get_trace_context, set_trace_context
 from app.parsers.router import ParserRouter
 from app.parsers.types import ParsedDocument
 from app.rag.chunking import chunk_parsed_document
 from app.rag.embedding import HashingEmbedder
 from app.rag.types import IndexedChunk
 from app.repositories.ingestion_tasks import IngestionTaskRepository
+
+logger = logging.getLogger(__name__)
 
 
 class ParserRouterProtocol(Protocol):
@@ -96,6 +100,13 @@ class IngestionService:
                 parsed_key = document.parsed_object_key or (
                     f"{source_key.rsplit('/source/', 1)[0]}/parsed.json"
                 )
+            set_trace_context(
+                stage="parse",
+                document_id=str(did),
+                task_id=str(tid),
+                parser=parser_name,
+            )
+            logger.info("ingestion parsing started")
             await self._progress(
                 tid,
                 did,
@@ -103,15 +114,24 @@ class IngestionService:
                 20,
                 document_status=DocumentStatus.PROCESSING,
             )
-            source = await self.storage.get(source_key)
-            parsed_document = await self.parser_router.parse_document(filename, source, parser_name)
+            with get_langfuse_tracer().span("ingestion.parse", get_trace_context().as_dict()):
+                source = await self.storage.get(source_key)
+                parsed_document = await self.parser_router.parse_document(
+                    filename, source, parser_name
+                )
             parsed = parsed_document.model_dump_json().encode("utf-8")
             await self.storage.put(parsed_key, parsed, "application/json")
             parsed_written = True
+            set_trace_context(stage="chunk", document_id=str(did), task_id=str(tid))
+            logger.info("ingestion chunking started")
             await self._progress(tid, did, TaskStage.CHUNKING, 40)
-            chunks = chunk_parsed_document(parsed_document)
+            with get_langfuse_tracer().span("ingestion.chunk", get_trace_context().as_dict()):
+                chunks = chunk_parsed_document(parsed_document)
+            set_trace_context(stage="embed", document_id=str(did), task_id=str(tid))
+            logger.info("ingestion embedding started")
             await self._progress(tid, did, TaskStage.EMBEDDING, 60)
-            vectors = await self._embed_texts([chunk.text for chunk in chunks])
+            with get_langfuse_tracer().span("ingestion.embed", get_trace_context().as_dict()):
+                vectors = await self._embed_texts([chunk.text for chunk in chunks])
             async with self.session_factory() as session:
                 document = await session.get(Document, did)
                 if document is None:
@@ -135,8 +155,13 @@ class IngestionService:
                 )
                 for index, chunk in enumerate(chunks)
             ]
+            set_trace_context(
+                stage="index", document_id=str(did), task_id=str(tid), knowledge_base_id=str(kb_id)
+            )
+            logger.info("ingestion indexing started")
             await self._progress(tid, did, TaskStage.INDEXING, 80)
-            await self.index.replace_document(kb_id, did, indexed)
+            with get_langfuse_tracer().span("ingestion.index", get_trace_context().as_dict()):
+                await self.index.replace_document(kb_id, did, indexed)
             async with self.session_factory() as session:
                 document = await session.get(Document, did)
                 task = await session.get(IngestionTask, tid)

@@ -1,6 +1,6 @@
 import re
 import tomllib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import yaml
 
@@ -31,7 +31,7 @@ def test_pyright_uses_the_dockerfile_virtualenv() -> None:
     expected = re.search(r"UV_PROJECT_ENVIRONMENT=(?P<path>\S+)", dockerfile)
 
     assert expected is not None
-    expected_path = Path(expected.group("path"))
+    expected_path = PurePosixPath(expected.group("path"))
 
     assert pyproject["tool"]["pyright"]["venvPath"] == str(expected_path.parent)
     assert pyproject["tool"]["pyright"]["venv"] == expected_path.name

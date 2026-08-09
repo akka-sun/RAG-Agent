@@ -1,8 +1,11 @@
+import logging
+import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Literal, TypedDict
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, Request, Response
+from starlette.middleware.base import RequestResponseEndpoint
 
 from app.agent.checkpoint import ensure_langgraph_security_env, setup_checkpointer
 from app.api.errors import register_error_handlers
@@ -15,13 +18,42 @@ from app.api.routes.knowledge_bases import (
 )
 from app.api.routes.rag import router as rag_router
 from app.config import get_settings
+from app.observability import clear_trace_context, configure_logging, set_trace_context
+
+logger = logging.getLogger(__name__)
 
 
 class HealthResponse(TypedDict):
     status: Literal["ok"]
 
 
+async def trace_requests(
+    request: Request,
+    call_next: RequestResponseEndpoint,
+) -> Response:
+    trace_id = request.headers.get("x-trace-id") or uuid.uuid4().hex
+    token = set_trace_context(trace_id=trace_id, stage="http")
+    logger.info("http request started", extra={"path": request.url.path, "method": request.method})
+    try:
+        response = await call_next(request)
+    except Exception:
+        clear_trace_context(token)
+        raise
+    response.headers["x-trace-id"] = trace_id
+    logger.info(
+        "http request finished",
+        extra={
+            "path": request.url.path,
+            "method": request.method,
+            "status_code": response.status_code,
+        },
+    )
+    clear_trace_context(token)
+    return response
+
+
 def create_app() -> FastAPI:
+    configure_logging()
     settings = get_settings()
 
     @asynccontextmanager
@@ -39,6 +71,8 @@ def create_app() -> FastAPI:
         debug=settings.debug,
         lifespan=lifespan,
     )
+
+    application.middleware("http")(trace_requests)
 
     router = APIRouter(prefix=settings.api_v1_prefix)
 

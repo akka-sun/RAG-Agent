@@ -1,8 +1,10 @@
+import logging
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from app.observability import get_langfuse_tracer, get_trace_context, set_trace_context
 from app.rag.hybrid import RankedChunk, RetrievedChunk, dedupe_chunks, fuse_rrf
 
 
@@ -70,18 +72,36 @@ class HybridRetrievalService:
         query: str,
         limit: int,
     ) -> RetrievalAnswerContext:
-        vectors = await self._embeddings.embed_texts([query])
-        if not vectors:
-            return _empty_context()
+        set_trace_context(
+            stage="retrieve",
+            knowledge_base_id=str(knowledge_base_id),
+            retrieval_attempt=1,
+        )
+        logger.info("retrieval started")
+        with get_langfuse_tracer().span(
+            "retrieval.hybrid",
+            get_trace_context().as_dict(),
+            input={"query": query, "limit": limit},
+        ):
+            vectors = await self._embeddings.embed_texts([query])
+            if not vectors:
+                return _empty_context()
 
-        search_limit = max(limit * 2, limit)
-        dense = await self._store.search_dense(knowledge_base_id, vectors[0], search_limit)
-        sparse = await self._store.search_sparse(knowledge_base_id, query, search_limit)
-        fused = dedupe_chunks(fuse_rrf(dense, sparse, limit=search_limit))
-        if not fused:
-            return _empty_context()
+            search_limit = max(limit * 2, limit)
+            dense = await self._store.search_dense(knowledge_base_id, vectors[0], search_limit)
+            sparse = await self._store.search_sparse(knowledge_base_id, query, search_limit)
+            fused = dedupe_chunks(fuse_rrf(dense, sparse, limit=search_limit))
+            if not fused:
+                return _empty_context()
 
-        reranked = await self._reranker.rerank(query, fused, limit)
+        set_trace_context(stage="rerank", knowledge_base_id=str(knowledge_base_id))
+        logger.info("reranking started")
+        with get_langfuse_tracer().span(
+            "retrieval.rerank",
+            get_trace_context().as_dict(),
+            input={"query": query, "candidates": len(fused), "limit": limit},
+        ):
+            reranked = await self._reranker.rerank(query, fused, limit)
         return _answer_context_from_chunks(reranked)
 
 
@@ -145,3 +165,6 @@ def _string_metadata(chunk: RankedChunk, key: str) -> str | None:
     if isinstance(value, str) and value:
         return value
     return None
+
+
+logger = logging.getLogger(__name__)

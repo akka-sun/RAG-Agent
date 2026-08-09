@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 from collections.abc import AsyncIterator
 from typing import Protocol
@@ -6,6 +7,7 @@ from typing import Protocol
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.state import AgentEvidence
+from app.observability import get_langfuse_tracer, get_trace_context, set_trace_context
 from app.repositories.messages import MessageCitationInput
 from app.schemas.chat import SSEEvent
 from app.services.agent_chat import AgentAnswer
@@ -69,38 +71,49 @@ class SSEChatService:
             conversation = await self._conversations.get(conversation_id)
             if conversation is None:
                 raise ConversationNotFoundError
+            set_trace_context(
+                stage="sse",
+                conversation_id=str(conversation_id),
+                knowledge_base_id=str(conversation.knowledge_base_id),
+            )
+            logger.info("sse chat started")
 
-            await self._messages.add_user_message(
-                conversation_id=conversation_id,
-                content=user_message,
-            )
-            yield SSEEvent(
-                event="message_start",
-                data={"conversation_id": str(conversation_id)},
-            )
-            yield SSEEvent(event="agent_status", data={"status": "running"})
+            with get_langfuse_tracer().span(
+                "sse.chat",
+                get_trace_context().as_dict(),
+                input={"message_length": len(user_message)},
+            ):
+                await self._messages.add_user_message(
+                    conversation_id=conversation_id,
+                    content=user_message,
+                )
+                yield SSEEvent(
+                    event="message_start",
+                    data={"conversation_id": str(conversation_id)},
+                )
+                yield SSEEvent(event="agent_status", data={"status": "running"})
 
-            answer = await self._agent.answer(
-                knowledge_base_id=conversation.knowledge_base_id,
-                query=user_message,
-            )
-            tokens = _tokens(answer.content)
-            for token in tokens:
-                yield SSEEvent(event="token", data={"text": token})
-            for citation in answer.citations:
-                yield SSEEvent(event="citation", data=_citation_event_data(citation))
+                answer = await self._agent.answer(
+                    knowledge_base_id=conversation.knowledge_base_id,
+                    query=user_message,
+                )
+                tokens = _tokens(answer.content)
+                for token in tokens:
+                    yield SSEEvent(event="token", data={"text": token})
+                for citation in answer.citations:
+                    yield SSEEvent(event="citation", data=_citation_event_data(citation))
 
-            citation_inputs = [_citation_input(citation) for citation in answer.citations]
-            valid_labels = {citation.label for citation in answer.citations}
-            await self._messages.add_assistant_message_with_citations(
-                conversation_id=conversation_id,
-                content=answer.content,
-                citations=citation_inputs,
-                valid_labels=valid_labels,
-                token_count=len(tokens),
-            )
-            await self._session.commit()
-            yield SSEEvent(event="message_end", data={"content": answer.content})
+                citation_inputs = [_citation_input(citation) for citation in answer.citations]
+                valid_labels = {citation.label for citation in answer.citations}
+                await self._messages.add_assistant_message_with_citations(
+                    conversation_id=conversation_id,
+                    content=answer.content,
+                    citations=citation_inputs,
+                    valid_labels=valid_labels,
+                    token_count=len(tokens),
+                )
+                await self._session.commit()
+                yield SSEEvent(event="message_end", data={"content": answer.content})
         except Exception as exc:
             await self._session.rollback()
             yield SSEEvent(event="error", data={"message": str(exc) or exc.__class__.__name__})
@@ -147,3 +160,6 @@ def _citation_event_data(citation: AgentEvidence) -> dict[str, object]:
         "section": citation.section,
         "score": citation.score,
     }
+
+
+logger = logging.getLogger(__name__)

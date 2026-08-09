@@ -10,6 +10,7 @@ dependencies = [
     "asyncpg>=0.30",
     "fastapi>=0.121",
     "httpx>=0.28",
+    "langfuse>=4,<5",
     "langgraph>=0.6",
     "langgraph-checkpoint-postgres>=2",
     "minio>=7.2,<8",
