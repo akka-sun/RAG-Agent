@@ -127,6 +127,11 @@ class DocumentService:
             document.id
         ):
             raise DocumentNotRetryableError("Only failed documents without active tasks can retry")
+        try:
+            await self._index.delete_document(knowledge_base_id, document_id)
+        except Exception as exc:
+            await self._session.rollback()
+            raise DocumentCleanupFailedError("Document cleanup failed") from exc
         task = IngestionTask(id=uuid.uuid4(), document_id=document.id, status=TaskStatus.PENDING)
         document.status = DocumentStatus.PENDING
         document.error = None

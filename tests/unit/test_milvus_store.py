@@ -3,7 +3,8 @@ from typing import Any
 
 import pytest
 
-from app.infrastructure.milvus_store import MilvusChunk, MilvusChunkStore
+from app.infrastructure.milvus_store import MilvusChunk, MilvusChunkStore, MilvusDocumentIndex
+from app.rag.types import IndexedChunk
 
 KB_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 DOC_ID = uuid.UUID("22222222-2222-2222-2222-222222222222")
@@ -46,6 +47,24 @@ class FakeMilvusClient:
         return self.search_results
 
 
+class FakeMilvusChunkStore:
+    def __init__(self) -> None:
+        self.upserted_chunks: list[MilvusChunk] = []
+        self.deleted_documents: list[tuple[uuid.UUID, uuid.UUID]] = []
+
+    async def ensure_collection(self) -> None:
+        return None
+
+    async def upsert_document_chunks(self, chunks: list[MilvusChunk]) -> None:
+        self.upserted_chunks = chunks
+
+    async def delete_document(
+        self, document_id: uuid.UUID, knowledge_base_id: uuid.UUID | None = None
+    ) -> None:
+        assert knowledge_base_id is not None
+        self.deleted_documents.append((knowledge_base_id, document_id))
+
+
 def make_chunk(chunk_id: str = "chunk-1") -> MilvusChunk:
     return MilvusChunk(
         knowledge_base_id=KB_ID,
@@ -56,6 +75,19 @@ def make_chunk(chunk_id: str = "chunk-1") -> MilvusChunk:
         start=0,
         end=13,
         vector=[0.1, 0.2, 0.3],
+    )
+
+
+def make_indexed_chunk(chunk_id: str = "chunk-1") -> IndexedChunk:
+    return IndexedChunk(
+        knowledge_base_id=KB_ID,
+        document_id=DOC_ID,
+        filename="guide.md",
+        chunk_id=chunk_id,
+        text="refund policy",
+        start=0,
+        end=13,
+        vector=(0.1, 0.2, 0.3),
     )
 
 
@@ -127,3 +159,27 @@ async def test_search_sparse_uses_query_text_and_bm25_field() -> None:
     assert fake.search_calls[0]["filter"] == f'knowledge_base_id == "{KB_ID}"'
     assert fake.search_calls[0]["anns_field"] == "sparse_vector"
     assert fake.search_calls[0]["data"] == ["refund policy"]
+
+
+@pytest.mark.asyncio
+async def test_document_index_converts_indexed_chunks_for_milvus() -> None:
+    fake = FakeMilvusChunkStore()
+    index = MilvusDocumentIndex(fake)
+
+    await index.replace_document(KB_ID, DOC_ID, [make_indexed_chunk()])
+
+    assert len(fake.upserted_chunks) == 1
+    assert fake.upserted_chunks[0].knowledge_base_id == KB_ID
+    assert fake.upserted_chunks[0].document_id == DOC_ID
+    assert fake.upserted_chunks[0].chunk_id == "chunk-1"
+    assert list(fake.upserted_chunks[0].vector) == [0.1, 0.2, 0.3]
+
+
+@pytest.mark.asyncio
+async def test_document_index_delete_uses_knowledge_base_filter() -> None:
+    fake = FakeMilvusChunkStore()
+    index = MilvusDocumentIndex(fake)
+
+    await index.delete_document(KB_ID, DOC_ID)
+
+    assert fake.deleted_documents == [(KB_ID, DOC_ID)]

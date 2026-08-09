@@ -95,6 +95,7 @@ class IngestionService:
             await self._progress(tid, did, TaskStage.CHUNKING, 40)
             chunks = chunk_text(source)
             await self._progress(tid, did, TaskStage.EMBEDDING, 60)
+            vectors = await self._embed_texts([chunk.text for chunk in chunks])
             async with self.session_factory() as session:
                 document = await session.get(Document, did)
                 if document is None:
@@ -109,9 +110,9 @@ class IngestionService:
                     chunk.text,
                     chunk.start,
                     chunk.end,
-                    self.embedder.embed(chunk.text),
+                    vectors[index],
                 )
-                for chunk in chunks
+                for index, chunk in enumerate(chunks)
             ]
             await self._progress(tid, did, TaskStage.INDEXING, 80)
             await self.index.replace_document(kb_id, did, indexed)
@@ -143,3 +144,14 @@ class IngestionService:
                 details = "; ".join(compensation_failures)
                 raise DocumentCleanupFailedError(f"Ingestion cleanup failed ({details})") from exc
             raise
+
+    async def _embed_texts(self, texts: list[str]) -> list[list[float]]:
+        embed_texts = getattr(self.embedder, "embed_texts", None)
+        if embed_texts is not None:
+            vectors = await embed_texts(texts)
+        else:
+            vectors = [self.embedder.embed(text) for text in texts]
+        if len(vectors) != len(texts):
+            msg = "embedding client returned a different number of vectors"
+            raise ValueError(msg)
+        return vectors

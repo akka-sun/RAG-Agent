@@ -4,10 +4,12 @@ from arq.connections import RedisSettings
 from minio import Minio
 from redis import Redis
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.db import async_session_factory, engine
+from app.infrastructure.milvus_store import MilvusChunkStore, MilvusDocumentIndex
+from app.infrastructure.model_clients import EmbeddingClient
 from app.infrastructure.object_storage import MinioObjectStorage
-from app.infrastructure.redis_index import RedisDocumentIndex
+from app.rag.embedding import HashingEmbedder
 from app.services.ingestion import IngestionService
 
 
@@ -18,6 +20,27 @@ async def ingest_document(ctx: dict[str, object], task_id: str, document_id: str
 
 async def health_job(ctx: dict[str, object]) -> str:
     return "ok"
+
+
+def build_document_index(settings: Settings) -> MilvusDocumentIndex:
+    return MilvusDocumentIndex(
+        MilvusChunkStore(
+            uri=settings.milvus_uri,
+            token=settings.milvus_token,
+            collection_name=settings.milvus_collection,
+            embedding_dimension=settings.embedding_dimension,
+        )
+    )
+
+
+def build_ingestion_embedder(settings: Settings) -> EmbeddingClient | HashingEmbedder:
+    if settings.app_env == "production" or settings.embedding_api_key:
+        return EmbeddingClient(
+            base_url=settings.embedding_base_url,
+            api_key=settings.embedding_api_key,
+            model=settings.embedding_model,
+        )
+    return HashingEmbedder(dimensions=settings.embedding_dimension)
 
 
 async def on_startup(ctx: dict[str, object]) -> None:
@@ -34,7 +57,8 @@ async def on_startup(ctx: dict[str, object]) -> None:
     ctx["ingestion_service"] = IngestionService(
         async_session_factory,
         MinioObjectStorage(minio, settings.minio_bucket),
-        RedisDocumentIndex(redis),
+        build_document_index(settings),
+        build_ingestion_embedder(settings),
     )
 
 

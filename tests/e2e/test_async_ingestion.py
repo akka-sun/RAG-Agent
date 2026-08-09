@@ -12,14 +12,15 @@ import httpx
 import pytest
 from minio import Minio
 from minio.error import S3Error
-from redis import Redis
 from sqlalchemy import text
 
 from app.core.config import get_settings
 from app.db import async_session_factory
+from app.infrastructure.milvus_store import MilvusChunkStore, MilvusDocumentIndex
 from app.infrastructure.object_storage import MinioObjectStorage
-from app.infrastructure.redis_index import RedisDocumentIndex
+from app.rag.hybrid import RetrievedChunk
 from app.services.ingestion import IngestionService
+from app.worker import build_ingestion_embedder
 
 pytestmark = pytest.mark.e2e
 
@@ -61,10 +62,49 @@ async def _wait_for_completed(client: httpx.AsyncClient, task_id: str) -> dict[s
     )
 
 
+async def _wait_for_indexed_document(
+    chunk_store: MilvusChunkStore,
+    knowledge_base_id: UUID,
+    document_id: str,
+    expected_count: int,
+) -> list[RetrievedChunk]:
+    deadline = time.monotonic() + POLL_TIMEOUT_SECONDS
+    last_chunks: list[RetrievedChunk] = []
+    while time.monotonic() < deadline:
+        chunks = await chunk_store.search_sparse(knowledge_base_id, "Acceptance", limit=10)
+        document_chunks = [chunk for chunk in chunks if chunk.document_id == document_id]
+        if len(document_chunks) == expected_count:
+            return chunks
+        last_chunks = chunks
+        await asyncio.sleep(0.2)
+    pytest.fail(
+        f"Milvus index did not expose expected document chunks; "
+        f"document_id={document_id}, expected_count={expected_count}, last_chunks={last_chunks}"
+    )
+
+
+async def _wait_for_deleted_document(
+    chunk_store: MilvusChunkStore,
+    knowledge_base_id: UUID,
+    document_id: str,
+) -> None:
+    deadline = time.monotonic() + POLL_TIMEOUT_SECONDS
+    last_chunks: list[RetrievedChunk] = []
+    while time.monotonic() < deadline:
+        chunks = await chunk_store.search_sparse(knowledge_base_id, "Acceptance", limit=10)
+        if all(chunk.document_id != document_id for chunk in chunks):
+            return
+        last_chunks = chunks
+        await asyncio.sleep(0.2)
+    pytest.fail(
+        f"Milvus index still returned deleted document; "
+        f"document_id={document_id}, last_chunks={last_chunks}"
+    )
+
+
 @pytest.mark.asyncio
 async def test_async_ingestion_is_idempotent_and_delete_cleans_all_stores() -> None:
     settings = get_settings()
-    redis = cast(Any, Redis).from_url(settings.redis_url)
     minio = Minio(
         settings.minio_endpoint,
         access_key=settings.minio_access_key,
@@ -72,7 +112,14 @@ async def test_async_ingestion_is_idempotent_and_delete_cleans_all_stores() -> N
         secure=False,
     )
     storage = MinioObjectStorage(minio, settings.minio_bucket)
-    index = RedisDocumentIndex(redis)
+    chunk_store = MilvusChunkStore(
+        uri=settings.milvus_uri,
+        token=settings.milvus_token,
+        collection_name=settings.milvus_collection,
+        embedding_dimension=settings.embedding_dimension,
+    )
+    index = MilvusDocumentIndex(chunk_store)
+    await chunk_store.ensure_collection()
 
     async with httpx.AsyncClient(base_url=API_URL, timeout=10) as client:
         kb_response = await client.post(
@@ -126,14 +173,22 @@ async def test_async_ingestion_is_idempotent_and_delete_cleans_all_stores() -> N
         assert parsed_response.status_code == 200
         assert parsed_response.json()["text"] == "# Acceptance\n\nReal async ingestion.\n"
 
-        kb_uuid, document_uuid = UUID(knowledge_base_id), UUID(document_id)
-        chunks = await index.get_document(kb_uuid, document_uuid)
-        assert len(chunks) == document["chunk_count"]
+        kb_uuid = UUID(knowledge_base_id)
+        chunks = await _wait_for_indexed_document(
+            chunk_store,
+            kb_uuid,
+            document_id,
+            document["chunk_count"],
+        )
 
-        service = IngestionService(async_session_factory, storage, index)
+        service = IngestionService(
+            async_session_factory,
+            storage,
+            index,
+            build_ingestion_embedder(settings),
+        )
         await service.run(task_id, document_id)
-        chunks_after_reentry = await index.get_document(kb_uuid, document_uuid)
-        assert len(chunks_after_reentry) == len(chunks)
+        chunks_after_reentry = await chunk_store.search_sparse(kb_uuid, "Acceptance", limit=10)
         assert [chunk.chunk_id for chunk in chunks_after_reentry] == [
             chunk.chunk_id for chunk in chunks
         ]
@@ -151,9 +206,8 @@ async def test_async_ingestion_is_idempotent_and_delete_cleans_all_stores() -> N
             text("SELECT count(*) FROM documents WHERE id = :id"), {"id": document_id}
         )
         assert remaining.scalar_one() == 0
-    assert await index.get_document(kb_uuid, document_uuid) == []
     for object_key in (document["source_object_key"], document["parsed_object_key"]):
         with pytest.raises(S3Error) as exc_info:
             await storage.get(object_key)
         assert exc_info.value.code in {"NoSuchKey", "NoSuchObject"}
-    redis.close()
+    await _wait_for_deleted_document(chunk_store, kb_uuid, document_id)

@@ -4,11 +4,12 @@ import asyncio
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 from pymilvus import DataType, Function, FunctionType, MilvusClient
 
 from app.rag.hybrid import RetrievedChunk
+from app.rag.types import IndexedChunk
 
 DENSE_VECTOR_FIELD = "dense_vector"
 SPARSE_VECTOR_FIELD = "sparse_vector"
@@ -34,6 +35,18 @@ class MilvusChunk:
     start: int
     end: int
     vector: Sequence[float]
+
+
+class MilvusChunkStoreProtocol(Protocol):
+    async def ensure_collection(self) -> None: ...
+
+    async def upsert_document_chunks(self, chunks: list[MilvusChunk]) -> None: ...
+
+    async def delete_document(
+        self,
+        document_id: uuid.UUID,
+        knowledge_base_id: uuid.UUID | None = None,
+    ) -> None: ...
 
 
 class MilvusChunkStore:
@@ -93,11 +106,7 @@ class MilvusChunkStore:
         document_id: uuid.UUID,
         knowledge_base_id: uuid.UUID | None = None,
     ) -> None:
-        await asyncio.to_thread(
-            self._client.delete,
-            collection_name=self._collection_name,
-            filter=_document_filter(document_id, knowledge_base_id),
-        )
+        await asyncio.to_thread(self._delete_document, document_id, knowledge_base_id)
 
     def _ensure_collection(self) -> None:
         if self._client.has_collection(self._collection_name):
@@ -161,6 +170,60 @@ class MilvusChunkStore:
             collection_name=self._collection_name,
             data=[_serialize_chunk(chunk) for chunk in chunks],
         )
+        self._flush_collection()
+
+    def _delete_document(
+        self,
+        document_id: uuid.UUID,
+        knowledge_base_id: uuid.UUID | None,
+    ) -> None:
+        self._client.delete(
+            collection_name=self._collection_name,
+            filter=_document_filter(document_id, knowledge_base_id),
+        )
+        self._flush_collection()
+
+    def _flush_collection(self) -> None:
+        flush = getattr(self._client, "flush", None)
+        if flush is not None:
+            flush(self._collection_name)
+
+
+class MilvusDocumentIndex:
+    def __init__(self, store: MilvusChunkStoreProtocol) -> None:
+        self._store = store
+
+    async def replace_document(
+        self,
+        knowledge_base_id: uuid.UUID,
+        document_id: uuid.UUID,
+        chunks: list[IndexedChunk],
+    ) -> None:
+        del knowledge_base_id, document_id
+        await self._store.ensure_collection()
+        await self._store.upsert_document_chunks(
+            [
+                MilvusChunk(
+                    knowledge_base_id=chunk.knowledge_base_id,
+                    document_id=chunk.document_id,
+                    filename=chunk.filename,
+                    chunk_id=chunk.chunk_id,
+                    text=chunk.text,
+                    start=chunk.start,
+                    end=chunk.end,
+                    vector=chunk.vector,
+                )
+                for chunk in chunks
+            ]
+        )
+
+    async def delete_document(
+        self,
+        knowledge_base_id: uuid.UUID,
+        document_id: uuid.UUID,
+    ) -> None:
+        await self._store.ensure_collection()
+        await self._store.delete_document(document_id, knowledge_base_id=knowledge_base_id)
 
 
 def _serialize_chunk(chunk: MilvusChunk) -> dict[str, object]:

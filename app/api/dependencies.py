@@ -6,17 +6,15 @@ from uuid import UUID
 from arq.connections import RedisSettings, create_pool
 from fastapi import Depends
 from minio import Minio
-from redis import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.exceptions import IngestionQueueUnavailableError
 from app.db import get_session
-from app.infrastructure.milvus_store import MilvusChunkStore
+from app.infrastructure.milvus_store import MilvusChunkStore, MilvusDocumentIndex
 from app.infrastructure.model_clients import EmbeddingClient, RerankerClient
 from app.infrastructure.object_storage import MinioObjectStorage, ObjectStorage
 from app.infrastructure.queue import ArqIngestionQueue, IngestionQueue
-from app.infrastructure.redis_index import RedisDocumentIndex
 from app.rag.embedding import HashingEmbedder
 from app.rag.store import InMemoryVectorStore
 from app.repositories.documents import DocumentRepository
@@ -98,16 +96,13 @@ ObjectStorageDependency = Annotated[
 ]
 
 
-async def get_document_index() -> AsyncIterator[RedisDocumentIndex]:
-    redis = Redis.from_url(get_settings().redis_url)  # pyright: ignore[reportUnknownMemberType]
-    try:
-        yield RedisDocumentIndex(redis)  # pyright: ignore[reportArgumentType]
-    finally:
-        redis.close()
+async def get_document_index() -> MilvusDocumentIndex:
+    store = await get_milvus_chunk_store()
+    return MilvusDocumentIndex(store)
 
 
 DocumentIndexDependency = Annotated[
-    RedisDocumentIndex,
+    MilvusDocumentIndex,
     Depends(get_document_index),
 ]
 

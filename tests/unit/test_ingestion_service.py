@@ -128,6 +128,15 @@ class Embedder:
         return [float(len(text))]
 
 
+class AsyncEmbedder:
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        self.events.append("embed_batch")
+        return [[float(len(text))] for text in texts]
+
+
 def make_entities() -> tuple[uuid.UUID, uuid.UUID, Any, Any]:
     tid, did, kb_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     task: Any = Obj()
@@ -178,6 +187,24 @@ async def test_run_persists_exact_progress_payload_and_processing_order(
     assert index.calls[0][2][0].vector == [11.0]
     assert all(parsed is None for _, value, _, parsed in factory.commits if value < 100)
     assert document.parsed_object_key == parsed_key
+
+
+@pytest.mark.asyncio
+async def test_run_uses_async_embedding_client_for_batch_vectors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tid, did, task, document = make_entities()
+    events: list[str] = []
+    factory = Factory(task, document)
+    storage = Storage(events)
+    index = Index(events)
+    monkeypatch.setattr(ingestion_module, "IngestionTaskRepository", Repo)
+
+    await IngestionService(factory, storage, index, AsyncEmbedder(events)).run(tid, did)
+
+    assert "embed_batch" in events
+    assert "embed" not in events
+    assert index.calls[0][2][0].vector == [11.0]
 
 
 @pytest.mark.asyncio
