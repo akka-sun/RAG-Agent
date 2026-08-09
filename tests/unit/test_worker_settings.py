@@ -4,10 +4,12 @@ from app.config import Settings as CompatibilitySettings
 from app.core.config import Settings
 from app.infrastructure.milvus_store import MilvusDocumentIndex
 from app.infrastructure.model_clients import EmbeddingClient
+from app.parsers.router import ParserRouter
 from app.worker import (
     WorkerSettings,
     build_document_index,
     build_ingestion_embedder,
+    build_parser_router,
     health_job,
     ingest_document,
 )
@@ -50,6 +52,14 @@ def test_worker_uses_external_embedding_client_when_api_key_is_configured() -> N
     )
 
     assert isinstance(embedder, EmbeddingClient)
+
+
+def test_worker_builds_parser_router() -> None:
+    router = build_parser_router(Settings())
+
+    assert isinstance(router, ParserRouter)
+    assert router.mineru is not None
+    assert router.paddlex is not None
 
 
 def test_worker_lifecycle_hooks_are_minimal_async_callables() -> None:

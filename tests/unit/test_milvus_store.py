@@ -128,6 +128,11 @@ async def test_upsert_document_chunks_replaces_existing_document_before_insert()
             "text": "refund policy",
             "start": 0,
             "end": 13,
+            "page_number": None,
+            "section": None,
+            "parser_name": None,
+            "block_index": None,
+            "metadata": {},
             "dense_vector": [0.1, 0.2, 0.3],
         }
     ]

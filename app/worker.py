@@ -9,6 +9,9 @@ from app.db import async_session_factory, engine
 from app.infrastructure.milvus_store import MilvusChunkStore, MilvusDocumentIndex
 from app.infrastructure.model_clients import EmbeddingClient
 from app.infrastructure.object_storage import MinioObjectStorage
+from app.parsers.mineru import MinerUParser
+from app.parsers.paddlex import PaddleXParser
+from app.parsers.router import ParserRouter
 from app.rag.embedding import HashingEmbedder
 from app.services.ingestion import IngestionService
 
@@ -43,6 +46,14 @@ def build_ingestion_embedder(settings: Settings) -> EmbeddingClient | HashingEmb
     return HashingEmbedder(dimensions=settings.embedding_dimension)
 
 
+def build_parser_router(settings: Settings) -> ParserRouter:
+    return ParserRouter(
+        default_pdf_parser=settings.default_pdf_parser,
+        mineru=MinerUParser(base_url=settings.mineru_base_url),
+        paddlex=PaddleXParser(base_url=settings.paddlex_base_url),
+    )
+
+
 async def on_startup(ctx: dict[str, object]) -> None:
     settings = get_settings()
     redis = cast(Any, Redis).from_url(settings.redis_url)
@@ -59,6 +70,7 @@ async def on_startup(ctx: dict[str, object]) -> None:
         MinioObjectStorage(minio, settings.minio_bucket),
         build_document_index(settings),
         build_ingestion_embedder(settings),
+        parser_router=build_parser_router(settings),
     )
 
 

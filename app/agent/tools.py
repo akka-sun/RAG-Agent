@@ -38,6 +38,9 @@ class RetrievalTool:
                 start=item.start,
                 end=item.end,
                 score=item.score,
+                page_number=item.page_number,
+                section=item.section,
+                metadata=item.metadata,
             )
             for index, item in enumerate(context.evidence, start=1)
         ]

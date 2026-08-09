@@ -77,6 +77,8 @@ class RAGSourceResponse(BaseModel):
     start: int
     end: int
     score: float
+    page_number: int | None = None
+    section: str | None = None
 
 
 class RAGQueryResponse(BaseModel):

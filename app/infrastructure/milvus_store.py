@@ -24,6 +24,11 @@ OUTPUT_FIELDS = [
     TEXT_FIELD,
     "start",
     "end",
+    "page_number",
+    "section",
+    "parser_name",
+    "block_index",
+    "metadata",
 ]
 
 
@@ -37,6 +42,11 @@ class MilvusChunk:
     start: int
     end: int
     vector: Sequence[float]
+    page_number: int | None = None
+    section: str | None = None
+    parser_name: str | None = None
+    block_index: int | None = None
+    metadata: Mapping[str, object] | None = None
 
 
 class MilvusChunkStoreProtocol(Protocol):
@@ -118,6 +128,7 @@ class MilvusChunkStore:
 
     def _ensure_collection(self) -> None:
         if self._client.has_collection(self._collection_name):
+            self._ensure_metadata_fields()
             self._client.load_collection(self._collection_name)
             return
 
@@ -129,6 +140,11 @@ class MilvusChunkStore:
         schema.add_field(TEXT_FIELD, DataType.VARCHAR, max_length=65535, enable_analyzer=True)
         schema.add_field("start", DataType.INT64)
         schema.add_field("end", DataType.INT64)
+        schema.add_field("page_number", DataType.INT64, nullable=True)
+        schema.add_field("section", DataType.VARCHAR, max_length=1024, nullable=True)
+        schema.add_field("parser_name", DataType.VARCHAR, max_length=32, nullable=True)
+        schema.add_field("block_index", DataType.INT64, nullable=True)
+        schema.add_field("metadata", DataType.JSON, nullable=True)
         schema.add_field(DENSE_VECTOR_FIELD, DataType.FLOAT_VECTOR, dim=self._embedding_dimension)
         schema.add_field(SPARSE_VECTOR_FIELD, DataType.SPARSE_FLOAT_VECTOR)
         schema.add_function(
@@ -159,6 +175,26 @@ class MilvusChunkStore:
             index_params=index_params,
         )
         self._client.load_collection(self._collection_name)
+
+    def _ensure_metadata_fields(self) -> None:
+        describe = getattr(self._client, "describe_collection", None)
+        add_field = getattr(self._client, "add_collection_field", None)
+        if describe is None or add_field is None:
+            return
+        description = describe(self._collection_name)
+        if not isinstance(description, Mapping):
+            return
+        existing = _collection_field_names(description)
+        field_specs: dict[str, tuple[DataType, dict[str, object]]] = {
+            "page_number": (DataType.INT64, {"nullable": True}),
+            "section": (DataType.VARCHAR, {"max_length": 1024, "nullable": True}),
+            "parser_name": (DataType.VARCHAR, {"max_length": 32, "nullable": True}),
+            "block_index": (DataType.INT64, {"nullable": True}),
+            "metadata": (DataType.JSON, {"nullable": True}),
+        }
+        for field_name, (data_type, kwargs) in field_specs.items():
+            if field_name not in existing:
+                add_field(self._collection_name, field_name, data_type, **kwargs)
 
     def _upsert_document_chunks(self, chunks: list[MilvusChunk]) -> None:
         first = chunks[0]
@@ -220,6 +256,11 @@ class MilvusDocumentIndex:
                     start=chunk.start,
                     end=chunk.end,
                     vector=chunk.vector,
+                    page_number=chunk.page_number,
+                    section=chunk.section,
+                    parser_name=chunk.parser_name,
+                    block_index=chunk.block_index,
+                    metadata=chunk.metadata,
                 )
                 for chunk in chunks
             ]
@@ -243,12 +284,32 @@ def _serialize_chunk(chunk: MilvusChunk) -> dict[str, object]:
         TEXT_FIELD: chunk.text,
         "start": chunk.start,
         "end": chunk.end,
+        "page_number": chunk.page_number,
+        "section": chunk.section,
+        "parser_name": chunk.parser_name,
+        "block_index": chunk.block_index,
+        "metadata": dict(chunk.metadata or {}),
         DENSE_VECTOR_FIELD: list(chunk.vector),
     }
 
 
 def _knowledge_base_filter(knowledge_base_id: uuid.UUID) -> str:
     return f'knowledge_base_id == "{_escape_filter_value(str(knowledge_base_id))}"'
+
+
+def _collection_field_names(description: Mapping[str, object]) -> set[str]:
+    fields = description.get("fields", [])
+    if not isinstance(fields, list):
+        return set()
+    names: set[str] = set()
+    for field in cast(list[object], fields):
+        if not isinstance(field, Mapping):
+            continue
+        field_mapping = cast(Mapping[str, object], field)
+        name = field_mapping.get("name")
+        if isinstance(name, str):
+            names.add(name)
+    return names
 
 
 def _document_filter(
@@ -272,6 +333,19 @@ def _map_hits(results: list[list[dict[str, object]]], *, source: str) -> list[Re
 
 def _map_hit(hit: Mapping[str, object], *, rank: int, source: str) -> RetrievedChunk:
     entity = _entity_from_hit(hit)
+    metadata = dict(_mapping_field(entity, "metadata"))
+    metadata.update(
+        {
+            "knowledge_base_id": _string_field(entity, "knowledge_base_id"),
+            "filename": _string_field(entity, "filename"),
+            "start": _int_field(entity, "start"),
+            "end": _int_field(entity, "end"),
+            "page_number": _optional_int_field(entity, "page_number"),
+            "section": _string_field(entity, "section"),
+            "parser": _string_field(entity, "parser_name"),
+            "block_index": _optional_int_field(entity, "block_index"),
+        }
+    )
     return RetrievedChunk(
         chunk_id=_string_field(entity, "chunk_id", fallback=hit.get("id")),
         document_id=_string_field(entity, "document_id"),
@@ -279,12 +353,7 @@ def _map_hit(hit: Mapping[str, object], *, rank: int, source: str) -> RetrievedC
         rank=rank,
         score=_float_field(hit, "distance"),
         source=source,
-        metadata={
-            "knowledge_base_id": _string_field(entity, "knowledge_base_id"),
-            "filename": _string_field(entity, "filename"),
-            "start": _int_field(entity, "start"),
-            "end": _int_field(entity, "end"),
-        },
+        metadata=metadata,
     )
 
 
@@ -314,6 +383,26 @@ def _int_field(data: Mapping[str, object], key: str) -> int:
     if isinstance(value, str) and value:
         return int(value)
     return 0
+
+
+def _optional_int_field(data: Mapping[str, object], key: str) -> int | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str) and value:
+        return int(value)
+    return None
+
+
+def _mapping_field(data: Mapping[str, object], key: str) -> Mapping[str, object]:
+    value = data.get(key, {})
+    if isinstance(value, Mapping):
+        return cast(Mapping[str, object], value)
+    return {}
 
 
 def _float_field(data: Mapping[str, object], key: str) -> float:

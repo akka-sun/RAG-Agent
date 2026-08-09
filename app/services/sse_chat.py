@@ -125,11 +125,14 @@ def _citation_input(citation: AgentEvidence) -> MessageCitationInput:
         document_id=citation.document_id,
         chunk_id=citation.chunk_id,
         quote=citation.text,
+        page_number=citation.page_number,
+        section=citation.section,
         score=citation.score,
         metadata={
             "filename": citation.filename,
             "start": citation.start,
             "end": citation.end,
+            **dict(citation.metadata),
         },
     )
 
@@ -140,5 +143,7 @@ def _citation_event_data(citation: AgentEvidence) -> dict[str, object]:
         "document_id": str(citation.document_id),
         "chunk_id": citation.chunk_id,
         "quote": citation.text,
+        "page_number": citation.page_number,
+        "section": citation.section,
         "score": citation.score,
     }

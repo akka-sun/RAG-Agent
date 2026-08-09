@@ -69,6 +69,8 @@ async def query_agent(
                 start=item.start,
                 end=item.end,
                 score=item.score,
+                page_number=item.page_number,
+                section=item.section,
             )
             for item in answer.citations
         ],
@@ -106,6 +108,8 @@ async def query_rag(
                 start=item.start,
                 end=item.end,
                 score=item.score,
+                page_number=item.page_number,
+                section=item.section,
             )
             for item in context.evidence
         ],

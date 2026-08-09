@@ -1,8 +1,13 @@
 import uuid
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from app.rag.hybrid import RankedChunk, RetrievedChunk, dedupe_chunks, fuse_rrf
+
+
+def _empty_metadata() -> dict[str, object]:
+    return {}
 
 
 class EmbeddingClientProtocol(Protocol):
@@ -35,6 +40,9 @@ class RetrievalEvidence:
     start: int
     end: int
     score: float
+    page_number: int | None = None
+    section: str | None = None
+    metadata: Mapping[str, object] = field(default_factory=_empty_metadata)
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +100,9 @@ def _answer_context_from_chunks(chunks: list[RankedChunk]) -> RetrievalAnswerCon
             start=_int_metadata(chunk, "start"),
             end=_int_metadata(chunk, "end"),
             score=chunk.rerank_score if chunk.rerank_score is not None else chunk.rrf_score,
+            page_number=_optional_int_metadata(chunk, "page_number"),
+            section=_string_metadata(chunk, "section"),
+            metadata=chunk.metadata,
         )
         for index, chunk in enumerate(chunks, start=1)
     ]
@@ -114,3 +125,23 @@ def _int_metadata(chunk: RankedChunk, key: str) -> int:
     if isinstance(value, str) and value:
         return int(value)
     return 0
+
+
+def _optional_int_metadata(chunk: RankedChunk, key: str) -> int | None:
+    value = chunk.metadata.get(key)
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str) and value:
+        return int(value)
+    return None
+
+
+def _string_metadata(chunk: RankedChunk, key: str) -> str | None:
+    value = chunk.metadata.get(key)
+    if isinstance(value, str) and value:
+        return value
+    return None

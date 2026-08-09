@@ -1,17 +1,28 @@
 from __future__ import annotations
 
-import json
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 
 from app.core.exceptions import DocumentCleanupFailedError
 from app.models.document import Document, DocumentStatus
 from app.models.ingestion_task import IngestionTask, TaskStage, TaskStatus
-from app.rag.chunking import chunk_text
+from app.parsers.router import ParserRouter
+from app.parsers.types import ParsedDocument
+from app.rag.chunking import chunk_parsed_document
 from app.rag.embedding import HashingEmbedder
 from app.rag.types import IndexedChunk
 from app.repositories.ingestion_tasks import IngestionTaskRepository
+
+
+class ParserRouterProtocol(Protocol):
+    async def parse_document(
+        self,
+        filename: str,
+        content: bytes,
+        parser: str | None,
+    ) -> ParsedDocument: ...
 
 
 class IngestionService:
@@ -21,11 +32,13 @@ class IngestionService:
         storage: Any,
         index: Any,
         embedder: Any | None = None,
+        parser_router: ParserRouterProtocol | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.storage = storage
         self.index = index
         self.embedder = embedder or HashingEmbedder()
+        self.parser_router = parser_router or ParserRouter()
 
     async def _progress(
         self,
@@ -78,6 +91,8 @@ class IngestionService:
                 if document is None or await session.get(IngestionTask, tid) is None:
                     raise ValueError("ingestion task or document not found")
                 source_key = document.source_object_key
+                filename = document.filename
+                parser_name = getattr(document, "parser_name", "local")
                 parsed_key = document.parsed_object_key or (
                     f"{source_key.rsplit('/source/', 1)[0]}/parsed.json"
                 )
@@ -88,12 +103,13 @@ class IngestionService:
                 20,
                 document_status=DocumentStatus.PROCESSING,
             )
-            source = (await self.storage.get(source_key)).decode("utf-8")
-            parsed = json.dumps({"text": source}, ensure_ascii=False).encode()
+            source = await self.storage.get(source_key)
+            parsed_document = await self.parser_router.parse_document(filename, source, parser_name)
+            parsed = parsed_document.model_dump_json().encode("utf-8")
             await self.storage.put(parsed_key, parsed, "application/json")
             parsed_written = True
             await self._progress(tid, did, TaskStage.CHUNKING, 40)
-            chunks = chunk_text(source)
+            chunks = chunk_parsed_document(parsed_document)
             await self._progress(tid, did, TaskStage.EMBEDDING, 60)
             vectors = await self._embed_texts([chunk.text for chunk in chunks])
             async with self.session_factory() as session:
@@ -111,6 +127,11 @@ class IngestionService:
                     chunk.start,
                     chunk.end,
                     vectors[index],
+                    page_number=_metadata_int(chunk.metadata, "page_number"),
+                    section=_metadata_str(chunk.metadata, "section"),
+                    parser_name=_metadata_str(chunk.metadata, "parser"),
+                    block_index=_metadata_int(chunk.metadata, "block_index"),
+                    metadata=chunk.metadata,
                 )
                 for index, chunk in enumerate(chunks)
             ]
@@ -155,3 +176,23 @@ class IngestionService:
             msg = "embedding client returned a different number of vectors"
             raise ValueError(msg)
         return [tuple(float(value) for value in vector) for vector in raw_vectors]
+
+
+def _metadata_int(metadata: Mapping[str, object], key: str) -> int | None:
+    value = metadata.get(key)
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str) and value.isdecimal():
+        return int(value)
+    return None
+
+
+def _metadata_str(metadata: Mapping[str, object], key: str) -> str | None:
+    value = metadata.get(key)
+    if isinstance(value, str) and value:
+        return value
+    return None
