@@ -23,9 +23,10 @@ def test_validate_upload_contract() -> None:
     # Contract: normalize client paths to a safe basename, rather than rejecting traversal segments.
     assert validate_upload("../folder/Readme.MD", b"x") == "Readme.MD"
     assert validate_upload("a.txt", b"x" * MAX_DOCUMENT_SIZE) == "a.txt"
+    assert validate_upload("scan.pdf", b"%PDF") == "scan.pdf"
     with pytest.raises(DocumentTooLargeError):
         validate_upload("a.txt", b"x" * (MAX_DOCUMENT_SIZE + 1))
-    for name, content in [(None, b"x"), ("a.pdf", b"x"), ("a.txt", b"")]:
+    for name, content in [(None, b"x"), ("a.docx", b"x"), ("a.txt", b"")]:
         with pytest.raises(UnsupportedDocumentError):
             validate_upload(name, content)
 
@@ -42,6 +43,7 @@ def test_response_models_serialize_orm_objects() -> None:
             filename="a.txt",
             content_type="text/plain",
             size_bytes=1,
+            parser_name="local",
             source_object_key="x",
             parsed_object_key=None,
             status="pending",
@@ -68,6 +70,7 @@ def test_response_models_serialize_orm_objects() -> None:
         ),
     )()
     assert DocumentResponse.model_validate(doc).id == doc_id
+    assert DocumentResponse.model_validate(doc).parser_name == "local"
     assert IngestionTaskResponse.model_validate(task).document_id == doc_id
     assert (
         DocumentAcceptedResponse(document_id=doc_id, task_id=task_id, status="pending").status

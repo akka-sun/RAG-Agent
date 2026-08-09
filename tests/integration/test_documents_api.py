@@ -45,7 +45,41 @@ async def test_upload_document_accepts_multipart_and_returns_202(
         "status": "pending",
     }
     service.upload.assert_awaited_once_with(
-        knowledge_base_id, "notes.md", "text/markdown", b"# notes"
+        knowledge_base_id,
+        "notes.md",
+        "text/markdown",
+        b"# notes",
+        parser_name=None,
+    )
+
+
+async def test_upload_document_passes_pdf_parser_selection(
+    client: AsyncClient,
+    app: FastAPI,
+) -> None:
+    document_id = uuid.uuid4()
+    task_id = uuid.uuid4()
+    service = AsyncMock()
+    service.upload.return_value = (
+        Document(id=document_id, knowledge_base_id=uuid.uuid4()),
+        IngestionTask(id=task_id, document_id=document_id),
+    )
+    app.dependency_overrides[get_document_service] = lambda: service
+    knowledge_base_id = uuid.uuid4()
+
+    response = await client.post(
+        f"/api/v1/knowledge-bases/{knowledge_base_id}/documents",
+        data={"parser": "paddlex"},
+        files={"file": ("scan.pdf", b"%PDF", "application/pdf")},
+    )
+
+    assert response.status_code == 202
+    service.upload.assert_awaited_once_with(
+        knowledge_base_id,
+        "scan.pdf",
+        "application/pdf",
+        b"%PDF",
+        parser_name="paddlex",
     )
 
 
@@ -97,6 +131,7 @@ async def test_document_management_routes_delegate_to_service(
         filename="notes.md",
         content_type="text/markdown",
         size_bytes=7,
+        parser_name="local",
         source_object_key="source",
         status="completed",
         chunk_count=1,

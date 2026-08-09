@@ -3,7 +3,7 @@ from io import BytesIO
 from typing import Annotated
 from urllib.parse import quote
 
-from fastapi import APIRouter, File, Response, UploadFile, status
+from fastapi import APIRouter, File, Form, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
 
 from app.api.dependencies import DocumentServiceDependency
@@ -37,6 +37,7 @@ async def upload_document(
     knowledge_base_id: uuid.UUID,
     service: DocumentServiceDependency,
     file: Annotated[UploadFile, File()],
+    parser: Annotated[str | None, Form()] = None,
 ) -> DocumentAcceptedResponse:
     content = await file.read(MAX_DOCUMENT_SIZE + 1)
     document, task = await service.upload(
@@ -44,6 +45,7 @@ async def upload_document(
         file.filename or "",
         file.content_type or "application/octet-stream",
         content,
+        parser_name=parser,
     )
     return DocumentAcceptedResponse(
         document_id=document.id,

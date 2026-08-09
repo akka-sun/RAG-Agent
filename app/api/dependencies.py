@@ -19,6 +19,7 @@ from app.infrastructure.milvus_store import MilvusChunkStore, MilvusDocumentInde
 from app.infrastructure.model_clients import EmbeddingClient, RerankerClient
 from app.infrastructure.object_storage import MinioObjectStorage, ObjectStorage
 from app.infrastructure.queue import ArqIngestionQueue, IngestionQueue
+from app.parsers.router import ParserRouter
 from app.rag.embedding import HashingEmbedder
 from app.rag.store import InMemoryVectorStore
 from app.repositories.conversations import ConversationRepository
@@ -125,6 +126,7 @@ def get_document_service(
     queue: DocumentIngestionQueueDependency,
     index: DocumentIndexDependency,
 ) -> DocumentService:
+    settings = get_settings()
     return DocumentService(
         knowledge_bases=KnowledgeBaseRepository(session),
         documents=DocumentRepository(session),
@@ -133,6 +135,7 @@ def get_document_service(
         storage=storage,
         queue=queue,
         index=index,
+        parser_router=ParserRouter(default_pdf_parser=settings.default_pdf_parser),
     )
 
 
