@@ -277,10 +277,11 @@
 | 2026-07-24 | 阶段 2 | Markdown/TXT 字符分块、确定性 Hashing Embedding、余弦检索、进程内知识库隔离、引用回答与最小 RAG API | 31 个单元测试和 8 个集成测试通过、Ruff 与 Pyright 通过、真实 HTTP 创建/摄取/查询/删除返回 201/201/200/204、引用文档 ID 一致 | chunk size 与 overlap 取舍、归一化向量点积、Hashing 与语义 Embedding 的边界、召回与生成问题区分、检索前知识库隔离 | 完整摄取调用链、进程内 Store 的多进程与持久化边界、查询链路中的引用组装细节 |
 | 2026-08-09 | 阶段 4 | Milvus standalone Docker、PyMilvus Collection/BM25、Dense+BM25 双路召回、RRF 融合、远程 Embedding/Reranker 客户端、worker 写入 Milvus、retry/delete 清理 Milvus、`/rag/query` 混合检索接线 | `docker compose config --quiet` 通过；Milvus 真实集成测试通过；阶段 4 相关 32 个 unit/integration/e2e 测试通过；外部模型测试默认 skip，待配置真实 key 后运行 `pytest -m external` | Milvus schema/index/BM25 Function、知识库过滤、RRF 不混加原始分、PyMilvus 删除后 flush、默认测试与真实外部 API 验证分层 | 真实 Reranker 服务响应差异、生产 Embedding 维度迁移、LangGraph Agent 如何消费检索证据 |
 | 2026-08-09 | 阶段 5 | LangGraph Agent、OpenAI-compatible ChatClient、检索/直答分类、查询改写、最多三次检索循环、PostgreSQL Checkpointer、`/rag/agent/query` 接口 | Chat 客户端单元测试通过；外部 Chat API 测试默认 skip；LangGraph loop-limit 与 direct-answer 测试通过；PostgreSQL checkpoint 真实写入/读回通过；RAG Agent API 集成测试通过 | Agent state/node/edge、工具循环上限、Chat API 边界、SQLAlchemy URL 密码渲染、LangGraph checkpoint 生命周期 | 会话级 thread 复用、SSE token 事件、引用快照落库、真实 Chat 模型提示词稳定性 |
+| 2026-08-09 | 阶段 6 | 会话、消息、引用快照 ORM 与迁移；Conversation/Message Repository；会话 REST API；SSE 对话事件；`/conversations/{conversation_id}/messages/stream`；消息插入序号保证刷新后顺序稳定 | `docker compose config --quiet` 通过；主库和测试库迁移到 head；`ruff format --check .` 148 files already formatted；`ruff check .` 通过；`pyright` 0 errors；unit 133 passed；integration 43 passed/3 skipped；E2E 1 passed；external 3 skipped/177 deselected | SSE 事件协议、业务消息与 LangGraph 状态边界、引用快照事务落库、PostgreSQL `now()` 同事务时间戳陷阱、数据库序号排序 | MinerU/PaddleX Docker 解析器、PDF/OCR 版面元数据、Langfuse Trace、评估报告与生产部署收口 |
 
 ## 5. 当前任务
 
-下一步进入阶段 6：在 LangGraph Agent 基础上增加会话、消息持久化、SSE 流式输出与引用快照落库，让回答过程可以被前端实时消费并在刷新后恢复。
+下一步进入阶段 7：在现有异步摄取链路上接入 MinerU 与 PaddleX Docker 解析服务，支持 PDF 上传、解析器显式选择、统一 `ParsedDocument` 归一化和可追踪引用元数据。
 
 ## 6. 阶段 3 验收记录（2026-08-06）
 
@@ -337,3 +338,24 @@
 6. **为什么外部 Chat API 测试默认 skip？** 默认质量门禁必须可重复且不消耗额度；真实模型连通性属于显式生产验收，必须由真实凭据和 `RAG_AGENT_EXTERNAL_TESTS_ENABLED=true` 开启。
 
 下一次复习时，请不看代码画出 Agent 图的五个节点，并说明每个节点读取哪些状态、写入哪些状态，以及哪条边阻止无限检索。
+
+## 9. 阶段 6 验收记录（2026-08-09）
+
+阶段 6 已在 LangGraph Agent 基础上补齐会话层。业务状态新增 `conversations`、`messages` 和 `message_citations` 三类持久化对象：会话归属知识库，消息保存 user/assistant 内容、状态、token 统计和数据库生成的插入序号，引用快照保存 document ID、chunk ID、source label、quote、score 与 metadata。
+
+阶段 6 已验证以下链路：客户端可在知识库下创建和列出会话；可查询、删除会话并恢复历史消息；`POST /api/v1/conversations/{conversation_id}/messages/stream` 会先保存用户消息，再通过 Agent 生成回答，以 SSE 事件输出 `message_start`、`agent_status`、`token`、`citation` 和 `message_end`，最后在同一 PostgreSQL 事务里提交 assistant message 与引用快照。引用标签会先与 Agent 返回证据集合校验，不合法引用不会部分落库。
+
+阶段 6 验收过程中发现并修复了一个生产级顺序问题：PostgreSQL 的 `now()` 在同一事务内返回相同时间，user/assistant 两条消息可能拥有相同 `created_at`；若再用随机 UUID 兜底排序，会偶发助手消息排在用户消息前。当前迁移新增 `messages.sequence_number`，由数据库 sequence 生成，消息读取按该序号排序，刷新恢复顺序稳定。
+
+验证证据只记录实际执行结果：`docker compose config --quiet` 通过；主库和测试库均迁移到 Alembic head；`ruff format --check .` 显示 148 files already formatted；`ruff check .` 全部通过；`pyright` 返回 0 errors；`tests/unit` 为 133 passed；`tests/integration` 为 43 passed、3 skipped；`tests/e2e` 为 1 passed；`pytest -m external -v` 为 3 skipped、177 deselected。外部 Chat/Embedding/Reranker 真实 API 入口保留在配置中，当前环境未提供真实凭据时不会误调用付费服务。
+
+### 学习复盘
+
+1. **为什么会话消息要独立于 LangGraph checkpoint？** Checkpoint 保存 Agent 图执行状态，面向恢复和内部编排；业务消息是产品侧可展示、可审计、可分页的数据，两者生命周期和读取方式不同。
+2. **为什么引用要落库为快照？** 检索索引和文档解析结果后续可能重建；若只保存 source label，刷新后可能找不到当时回答引用的原文片段。快照让回答可复现。
+3. **为什么 SSE 事件要固定名称？** 前端不应解析自然语言状态来判断进度；固定事件名让 UI 可以稳定区分开始、状态、token、引用、结束和错误。
+4. **为什么无效引用不能部分落库？** 回答文本和引用必须保持一致；若助手消息已保存但引用失败，用户会看到无法追踪来源的回答，所以引用校验要在 flush 前完成。
+5. **为什么不能只按 `created_at` 排消息？** PostgreSQL 的 `now()` 是事务时间，同一事务内多次插入可能完全相同；生产顺序需要数据库生成的单调序号作为可靠依据。
+6. **为什么外部 API 测试继续默认 skip？** 默认门禁要可重复、低成本且不依赖凭据；真实生产连通性必须由显式凭据和 `RAG_AGENT_EXTERNAL_TESTS_ENABLED=true` 打开。
+
+下一次复习时，请画出一次 SSE 请求从保存 user message、调用 Agent、输出 token/citation 到提交 assistant message 的事务边界，并解释为什么 message sequence 比 UUID 更适合作排序依据。

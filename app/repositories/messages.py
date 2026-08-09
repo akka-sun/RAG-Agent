@@ -87,7 +87,7 @@ class MessageRepository:
             select(Message)
             .options(selectinload(Message.citations))
             .where(Message.conversation_id == conversation_id)
-            .order_by(Message.created_at.asc(), Message.id.asc())
+            .order_by(Message.sequence_number.asc())
         )
         result = await self._session.scalars(statement)
         return list(result.all())

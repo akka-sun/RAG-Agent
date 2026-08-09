@@ -1,12 +1,13 @@
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import get_settings
-from app.models import Conversation, Document, KnowledgeBase, MessageRole
+from app.models import Conversation, Document, KnowledgeBase, Message, MessageRole, MessageStatus
 from app.repositories.conversations import ConversationRepository
 from app.repositories.messages import (
     CitationValidationError,
@@ -123,6 +124,42 @@ async def test_message_repository_adds_messages_and_citations(
     assert user_message in messages
     assert assistant_message.citations[0].source_label == "S1"
     assert assistant_message.citations[0].document_id == document.id
+
+
+async def test_message_repository_orders_by_database_insert_sequence_when_timestamps_match(
+    db_session: AsyncSession,
+) -> None:
+    document = await create_document(db_session)
+    conversation = await create_conversation(db_session, document)
+    repository = MessageRepository(db_session)
+    same_timestamp = datetime(2026, 8, 9, 12, 0, 0, tzinfo=UTC)
+    user_message = Message(
+        id=uuid.UUID("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+        conversation_id=conversation.id,
+        role=MessageRole.USER,
+        content="first message",
+        status=MessageStatus.COMPLETED,
+        created_at=same_timestamp,
+    )
+    assistant_message = Message(
+        id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+        conversation_id=conversation.id,
+        role=MessageRole.ASSISTANT,
+        content="second message",
+        status=MessageStatus.COMPLETED,
+        created_at=same_timestamp,
+    )
+    db_session.add(user_message)
+    await db_session.flush()
+    db_session.add(assistant_message)
+    await db_session.flush()
+
+    messages = await repository.list_by_conversation(conversation.id)
+
+    assert [message.content for message in messages] == [
+        "first message",
+        "second message",
+    ]
 
 
 async def test_add_assistant_message_rejects_invalid_citation_without_partial_write(

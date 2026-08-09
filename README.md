@@ -11,6 +11,7 @@ RAG Agent 是一个用于学习和验证 Agentic RAG 核心链路的后端项目
 - Milvus Dense + BM25 双路召回、RRF 融合、去重与远程 Reranker API。
 - `/rag/query` 通过混合检索返回稳定 `[S1]` 引用。
 - `/rag/agent/query` 通过 LangGraph Agent 自主判断是否检索、改写检索词、最多三次调用检索工具，并用真实 Chat API 生成带引用回答。
+- 持久化会话、用户消息、助手消息和引用快照；`/conversations/{id}/messages/stream` 通过 SSE 输出 Agent 回答过程。
 - PostgreSQL LangGraph Checkpointer 启动时自动初始化，Agent 请求使用独立 thread checkpoint。
 - 生产模式可通过 OpenAI-compatible Embedding API 写入真实向量；本地开发未配置 key 时保留 Hashing Embedding，避免默认测试消耗外部额度。
 - 数据库迁移，以及单元、集成和端到端测试。
@@ -20,7 +21,7 @@ RAG Agent 是一个用于学习和验证 Agentic RAG 核心链路的后端项目
 ```mermaid
 flowchart LR
     Client["客户端 / Swagger UI"] --> API["FastAPI API"]
-    API --> PG[("PostgreSQL<br/>知识库、文档、任务状态、LangGraph Checkpoint")]
+    API --> PG[("PostgreSQL<br/>知识库、文档、任务状态、会话、引用、LangGraph Checkpoint")]
     API --> MinIO[("MinIO<br/>原文、解析结果")]
     API --> Redis[("Redis<br/>ARQ 队列")]
     API --> Milvus[("Milvus<br/>Dense Vector、BM25、引用元数据")]
@@ -62,6 +63,15 @@ flowchart LR
 5. Agent 评估证据是否足够；若仍不足，最多再检索，总检索次数硬性限制为 3 次。
 6. Agent 使用真实 Chat API 基于证据生成最终回答，并返回 `[S1]` 等引用来源。
 7. LangGraph checkpoint 写入 PostgreSQL，用于后续会话恢复和流式事件阶段扩展。
+
+### 会话与 SSE 数据流
+
+1. 客户端在指定知识库下创建 conversation。
+2. 客户端向 `/conversations/{conversation_id}/messages/stream` 发送用户消息。
+3. API 保存 user message，并通过 `StreamingResponse` 输出 `text/event-stream`。
+4. SSE 事件使用固定事件名：`message_start`、`agent_status`、`retrieval_start`、`retrieval_result`、`token`、`citation`、`message_end`、`error`。
+5. Agent 完成回答后，assistant message 与本轮返回的 citations 在同一个 PostgreSQL 事务中提交。
+6. Citation 保存 document ID、chunk ID、source label、quote、score 和 metadata 快照，避免刷新后引用丢失或漂移。
 
 ## 环境要求
 
@@ -161,6 +171,10 @@ docker compose down
 | `GET` | `/health/live` | 存活检查 |
 | `POST` / `GET` | `/knowledge-bases` | 创建 / 列出知识库 |
 | `GET` / `DELETE` | `/knowledge-bases/{knowledge_base_id}` | 查询 / 删除知识库 |
+| `POST` / `GET` | `/knowledge-bases/{knowledge_base_id}/conversations` | 创建 / 列出会话 |
+| `GET` / `DELETE` | `/conversations/{conversation_id}` | 查询 / 删除会话 |
+| `GET` | `/conversations/{conversation_id}/messages` | 查询会话消息和引用快照 |
+| `POST` | `/conversations/{conversation_id}/messages/stream` | SSE 流式发送用户消息并持久化助手回答与引用 |
 | `POST` / `GET` | `/knowledge-bases/{knowledge_base_id}/documents` | 异步上传 / 列出文档 |
 | `GET` / `DELETE` | `/knowledge-bases/{knowledge_base_id}/documents/{document_id}` | 查询 / 删除文档 |
 | `GET` | `/knowledge-bases/{knowledge_base_id}/documents/{document_id}/source` | 下载原文 |
@@ -193,7 +207,7 @@ docker compose exec api uv run --no-sync pytest -m external -v
 ## 当前限制
 
 - 文件上传仅支持非空 `.md` 和 `.txt`，单文件最大 5 MiB；Worker 按 UTF-8 解码原文。
-- 阶段 5 已完成 LangGraph Agent 与真实 Chat API 接入；SSE 会话流、PDF 解析器、Langfuse Trace 和评估报告仍在后续阶段。
+- 阶段 6 已完成会话、消息、引用快照与 SSE 流式接口；PDF 解析器、Langfuse Trace 和评估报告仍在后续阶段。
 - 未配置真实外部 API key 时，本地开发/测试路径不会调用付费模型服务；生产部署应设置 `RAG_AGENT_APP_ENV=production` 并配置真实 Chat/Embedding/Reranker 凭据。
 - `/rag/documents` 保留为早期阶段的同步演示入口；生产文档摄取应使用 `/knowledge-bases/{knowledge_base_id}/documents`。
 - Compose 配置面向本地开发，包含源码挂载、热重载和默认开发凭据；生产部署需要独立的密钥、网络、备份、TLS 与可观测性配置。
