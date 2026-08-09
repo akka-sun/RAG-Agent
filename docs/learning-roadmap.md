@@ -278,10 +278,13 @@
 | 2026-08-09 | 阶段 4 | Milvus standalone Docker、PyMilvus Collection/BM25、Dense+BM25 双路召回、RRF 融合、远程 Embedding/Reranker 客户端、worker 写入 Milvus、retry/delete 清理 Milvus、`/rag/query` 混合检索接线 | `docker compose config --quiet` 通过；Milvus 真实集成测试通过；阶段 4 相关 32 个 unit/integration/e2e 测试通过；外部模型测试默认 skip，待配置真实 key 后运行 `pytest -m external` | Milvus schema/index/BM25 Function、知识库过滤、RRF 不混加原始分、PyMilvus 删除后 flush、默认测试与真实外部 API 验证分层 | 真实 Reranker 服务响应差异、生产 Embedding 维度迁移、LangGraph Agent 如何消费检索证据 |
 | 2026-08-09 | 阶段 5 | LangGraph Agent、OpenAI-compatible ChatClient、检索/直答分类、查询改写、最多三次检索循环、PostgreSQL Checkpointer、`/rag/agent/query` 接口 | Chat 客户端单元测试通过；外部 Chat API 测试默认 skip；LangGraph loop-limit 与 direct-answer 测试通过；PostgreSQL checkpoint 真实写入/读回通过；RAG Agent API 集成测试通过 | Agent state/node/edge、工具循环上限、Chat API 边界、SQLAlchemy URL 密码渲染、LangGraph checkpoint 生命周期 | 会话级 thread 复用、SSE token 事件、引用快照落库、真实 Chat 模型提示词稳定性 |
 | 2026-08-09 | 阶段 6 | 会话、消息、引用快照 ORM 与迁移；Conversation/Message Repository；会话 REST API；SSE 对话事件；`/conversations/{conversation_id}/messages/stream`；消息插入序号保证刷新后顺序稳定 | `docker compose config --quiet` 通过；主库和测试库迁移到 head；`ruff format --check .` 148 files already formatted；`ruff check .` 通过；`pyright` 0 errors；unit 133 passed；integration 43 passed/3 skipped；E2E 1 passed；external 3 skipped/177 deselected | SSE 事件协议、业务消息与 LangGraph 状态边界、引用快照事务落库、PostgreSQL `now()` 同事务时间戳陷阱、数据库序号排序 | MinerU/PaddleX Docker 解析器、PDF/OCR 版面元数据、Langfuse Trace、评估报告与生产部署收口 |
+| 2026-08-09 | 阶段 7 | MinerU/PaddleX Docker profile、统一 `ParsedDocument`、Markdown/TXT/PDF parser router、PDF 上传 parser 选择、解析结果落 MinIO、页码/章节/parser 元数据进入 Milvus 与引用 | `docker compose config --quiet` 通过；主库/测试库迁移到 head；阶段 7 后续全量门禁随阶段 8/9 通过；parser 外部测试默认 skip，配置真实服务后运行 `pytest -m external -v` | 解析器适配层、结构化解析产物、PDF parser 无静默降级、引用元数据可追溯 | 真实 MinerU/PaddleX 镜像的 GPU/CPU 部署差异、复杂扫描件 OCR 质量 |
+| 2026-08-09 | 阶段 8 | trace context、结构化 JSON 日志、HTTP `x-trace-id`、Worker/摄取/检索/Agent/SSE 阶段日志、Langfuse SDK 与可选 span、外部测试统一开关 | `ruff format --check .` 190 files already formatted；`ruff check .` 通过；`pyright` 0 errors；unit 160 passed；integration 47 passed/6 skipped；external 6 skipped/208 deselected | 日志上下文、请求/任务 trace、外部测试成本边界、Langfuse 关闭态不影响主链路 | 生产 Langfuse 项目与环境命名、采样率和敏感字段脱敏 |
+| 2026-08-09 | 阶段 9 | RAG 评估数据集 schema、Recall@K/MRR/引用命中率、Dense/BM25/RRF/Rerank 对比 Runner、Markdown 报告 CLI、架构/源码/评估/面试交付文档 | 评估单元测试与 integration runner 通过；最终全量门禁记录见阶段 9 进度文档 | 检索评估指标、消融对比、项目表达与面试复盘 | 使用真实业务数据集持续调参、引入 LLM judge 忠实度评估 |
 
 ## 5. 当前任务
 
-下一步进入阶段 7：在现有异步摄取链路上接入 MinerU 与 PaddleX Docker 解析服务，支持 PDF 上传、解析器显式选择、统一 `ParsedDocument` 归一化和可追踪引用元数据。
+阶段 0～9 已完成。下一步不再新增主线功能，建议进入真实凭据生产验收：配置 Chat/Embedding/Reranker API、启动 MinerU/PaddleX parser profile、配置 Langfuse，并运行 `pytest -m external -v` 与一组真实 PDF/问答评估数据集。
 
 ## 6. 阶段 3 验收记录（2026-08-06）
 
@@ -359,3 +362,47 @@
 6. **为什么外部 API 测试继续默认 skip？** 默认门禁要可重复、低成本且不依赖凭据；真实生产连通性必须由显式凭据和 `RAG_AGENT_EXTERNAL_TESTS_ENABLED=true` 打开。
 
 下一次复习时，请画出一次 SSE 请求从保存 user message、调用 Agent、输出 token/citation 到提交 assistant message 的事务边界，并解释为什么 message sequence 比 UUID 更适合作排序依据。
+
+## 10. 阶段 7 验收记录（2026-08-09）
+
+阶段 7 已完成 PDF 解析生产化接入。Docker Compose 新增 `parser` profile，下挂 `mineru` 与 `paddlex` 两个解析服务；API/Worker 保持默认主栈可运行，只有需要 PDF 解析时才依赖 parser profile。上传接口支持 multipart `parser` 字段：Markdown/TXT 使用 `local`，PDF 可选 `mineru` 或 `paddlex`，未传时使用 `RAG_AGENT_DEFAULT_PDF_PARSER`。
+
+解析层统一输出 `ParsedDocument`：包含 blocks、page number、section、block index、parser、source filename 等结构化信息。Worker 将解析产物保存到 MinIO 的 `parsed.json`，再按统一结构分块；Milvus chunk schema 与检索/Agent/SSE 引用链路保留页码、章节和 parser 元数据，使普通 PDF 与扫描件 OCR 结果都能追溯到来源。
+
+验收重点是“真实失败可见”：PDF 解析器失败不会静默切换到另一个解析器，任务会进入 failed，错误写入任务和文档状态；外部 MinerU/PaddleX 测试以 `external` 标记保护，默认不会在缺少真实服务时误调用。阶段 7 的代码随后在阶段 8/9 的全量质量门禁中继续通过。
+
+### 学习复盘
+
+1. **为什么要有统一 `ParsedDocument`？** 解析器返回结构各不相同；统一结构让后续分块、索引、引用、评估不关心 PDF 来自 MinerU 还是 PaddleX。
+2. **为什么 parser 失败不能自动降级？** 静默降级会掩盖 OCR、版面或服务配置问题，用户看到的引用来源也可能不可复现。生产系统应暴露真实失败并允许人工重试。
+3. **为什么页码和章节要进 Milvus metadata？** 检索命中不仅要返回文本，还要能告诉用户证据来自哪一页、哪一节；这些信息必须随 chunk 一起进入索引。
+
+## 11. 阶段 8 验收记录（2026-08-09）
+
+阶段 8 建立了生产质量和可观测性基础。API 中间件支持 `x-trace-id` 透传和自动生成，响应头返回同一 trace ID；Worker 使用 task ID 建立任务级 trace；摄取、解析、分块、向量化、索引、混合检索、重排、Agent 和 SSE 都会写入阶段日志。
+
+结构化日志使用 JSON formatter，稳定包含 `trace_id`、`stage`、`knowledge_base_id`、`document_id`、`task_id`、`conversation_id`、`message_id`、`parser`、`retrieval_attempt` 等上下文。为了兼容既有业务日志 `extra`，LogRecord 上使用安全前缀保存上下文字段，同时 JSON 输出保持原字段名。
+
+Langfuse SDK 已作为正式依赖加入；当 `RAG_AGENT_LANGFUSE_BASE_URL`、`RAG_AGENT_LANGFUSE_PUBLIC_KEY`、`RAG_AGENT_LANGFUSE_SECRET_KEY` 配置完整时，核心链路会导出 span；未配置时 tracer 自动关闭，不影响本地开发、CI 或默认测试。真实外部服务测试由 `RAG_AGENT_EXTERNAL_TESTS_ENABLED=true` 显式打开。
+
+验证证据：`docker compose config --quiet` 通过；主库和测试库均迁移到 Alembic head；`ruff format --check .` 显示 190 files already formatted；`ruff check .` 全部通过；`pyright` 返回 0 errors；unit 为 160 passed；integration 为 47 passed、6 skipped；E2E 为 1 passed；external 为 6 skipped、208 deselected。
+
+### 学习复盘
+
+1. **为什么 trace ID 要从 HTTP 到 Worker 分开处理？** HTTP 请求和异步任务生命周期不同；API 用请求 trace，Worker 用 task ID，可分别定位同步入口和后台执行。
+2. **为什么外部测试默认跳过？** 默认门禁必须稳定、低成本、可重复；真实服务连通性是显式生产验收，不应在没有凭据时消耗额度或失败。
+3. **为什么日志字段要避免覆盖业务 `extra`？** 业务日志可能已经带 `document_id`、`task_id`；观测层不能因为注入上下文导致原本的错误处理日志崩溃。
+
+## 12. 阶段 9 验收记录（2026-08-09）
+
+阶段 9 完成可复现评估与求职交付材料。`app/evaluation` 定义评估数据集 schema、检索指标、评估 Runner 和 Markdown 报告生成器；`scripts/run_evaluation.py` 可在 Docker 环境中读取 JSON/YAML 数据集，对 Dense、BM25、RRF、Rerank 四种模式计算 Recall@K、MRR 与 citation hit rate，并输出报告。
+
+文档交付包括架构说明、源码导读、Yuxi 对照、评估使用说明和面试材料。所有材料只描述仓库中已经实现并通过测试的能力，避免把计划中未做的 judge faithfulness、生产网关、权限系统等包装成已完成能力。
+
+最终定位：该项目已从“教学 RAG demo”收口到“可本地 Docker 启动、可接真实模型 API、可接 PDF 解析服务、可观测、可评估、可复盘”的生产化后端样板。下一步工作应围绕真实业务数据集、真实外部凭据、部署安全和性能压测，而不是继续扩主线功能。
+
+### 学习复盘
+
+1. **为什么评估要同时看 Dense、BM25、RRF 和 Rerank？** 单一路径只能证明某种召回方式有效；对比四种模式才能解释混合检索和重排是否真的带来收益。
+2. **为什么 citation hit rate 不等同于答案正确？** 它只衡量引用命中了预期证据，不能证明模型回答忠实；后续可引入人工标注或 LLM judge 作为补充。
+3. **为什么求职材料必须只写已验证能力？** 面试追问会落到实现细节、失败恢复和测试证据；真实完成的能力更容易讲清楚，也更抗追问。
