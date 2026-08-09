@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     chat_model: str = "gpt-4.1-mini"
     agent_max_retrievals: int = 3
     langgraph_strict_msgpack: bool = True
+    mineru_base_url: str = "http://mineru:8000"
+    paddlex_base_url: str = "http://paddlex:8080"
+    default_pdf_parser: Literal["mineru", "paddlex"] = "mineru"
 
     @property
     def database_url(self) -> URL:

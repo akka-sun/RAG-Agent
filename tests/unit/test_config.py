@@ -75,3 +75,16 @@ def test_stage5_agent_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
     assert settings.chat_model == "gpt-4.1-mini"
     assert settings.agent_max_retrievals == 3
     assert settings.langgraph_strict_msgpack is True
+
+
+def test_stage7_parser_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RAG_AGENT_MINERU_BASE_URL", "http://mineru:8000")
+    monkeypatch.setenv("RAG_AGENT_PADDLEX_BASE_URL", "http://paddlex:8080")
+    monkeypatch.setenv("RAG_AGENT_DEFAULT_PDF_PARSER", "mineru")
+
+    settings = Settings()
+
+    assert settings.mineru_base_url == "http://mineru:8000"
+    assert settings.paddlex_base_url == "http://paddlex:8080"
+    assert settings.default_pdf_parser == "mineru"
