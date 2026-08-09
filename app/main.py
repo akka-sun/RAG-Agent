@@ -1,7 +1,10 @@
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from typing import Literal, TypedDict
 
 from fastapi import APIRouter, FastAPI
 
+from app.agent.checkpoint import ensure_langgraph_security_env, setup_checkpointer
 from app.api.errors import register_error_handlers
 from app.api.routes.documents import router as documents_router
 from app.api.routes.ingestion_tasks import router as ingestion_tasks_router
@@ -19,9 +22,20 @@ class HealthResponse(TypedDict):
 def create_app() -> FastAPI:
     settings = get_settings()
 
+    @asynccontextmanager
+    async def lifespan(application: FastAPI) -> AsyncGenerator[None]:
+        del application
+        ensure_langgraph_security_env(strict_msgpack=settings.langgraph_strict_msgpack)
+        await setup_checkpointer(
+            settings.database_url,
+            strict_msgpack=settings.langgraph_strict_msgpack,
+        )
+        yield
+
     application = FastAPI(
         title=settings.app_name,
         debug=settings.debug,
+        lifespan=lifespan,
     )
 
     router = APIRouter(prefix=settings.api_v1_prefix)
