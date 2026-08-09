@@ -21,6 +21,8 @@ class AgentState(TypedDict, total=False):
     query: str
     knowledge_base_id: str
     normalized_query: str
+    classification: str
+    needs_more_evidence: bool
     retrieval_count: int
     evidence: list[AgentEvidence]
     final_answer: str
