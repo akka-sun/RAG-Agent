@@ -21,12 +21,15 @@ from app.infrastructure.object_storage import MinioObjectStorage, ObjectStorage
 from app.infrastructure.queue import ArqIngestionQueue, IngestionQueue
 from app.rag.embedding import HashingEmbedder
 from app.rag.store import InMemoryVectorStore
+from app.repositories.conversations import ConversationRepository
 from app.repositories.documents import DocumentRepository
 from app.repositories.ingestion_tasks import IngestionTaskRepository
 from app.repositories.knowledge_base import (
     KnowledgeBaseRepository,
 )
+from app.repositories.messages import MessageRepository
 from app.services.agent_chat import AgentChatService, AgentGraphProtocol
+from app.services.conversations import ConversationService
 from app.services.documents import DocumentService
 from app.services.knowledge_base import (
     KnowledgeBaseService,
@@ -148,6 +151,23 @@ def get_knowledge_base_service(
 KnowledgeBaseServiceDependency = Annotated[
     KnowledgeBaseService,
     Depends(get_knowledge_base_service),
+]
+
+
+def get_conversation_service(
+    session: SessionDependency,
+) -> ConversationService:
+    return ConversationService(
+        knowledge_bases=KnowledgeBaseRepository(session),
+        conversations=ConversationRepository(session),
+        messages=MessageRepository(session),
+        session=session,
+    )
+
+
+ConversationServiceDependency = Annotated[
+    ConversationService,
+    Depends(get_conversation_service),
 ]
 
 
