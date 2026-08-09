@@ -46,6 +46,17 @@ class Settings(BaseSettings):
     rerank_base_url: str = ""
     rerank_api_key: str = ""
     rerank_model: str = ""
+    chat_base_url: str = Field(
+        default="https://api.openai.com/v1",
+        validation_alias=AliasChoices("RAG_AGENT_CHAT_BASE_URL", "RAG_AGENT_OPENAI_BASE_URL"),
+    )
+    chat_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("RAG_AGENT_CHAT_API_KEY", "RAG_AGENT_OPENAI_API_KEY"),
+    )
+    chat_model: str = "gpt-4.1-mini"
+    agent_max_retrievals: int = 3
+    langgraph_strict_msgpack: bool = True
 
     @property
     def database_url(self) -> URL:

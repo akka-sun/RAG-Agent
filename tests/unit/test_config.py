@@ -59,3 +59,19 @@ def test_stage4_external_service_settings(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert settings.milvus_uri == "http://milvus:19530"
     assert settings.embedding_dimension == 1536
     assert settings.rerank_model == "bge-reranker-v2"
+
+
+def test_stage5_agent_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RAG_AGENT_OPENAI_BASE_URL", "https://api.example.test/v1")
+    monkeypatch.setenv("RAG_AGENT_OPENAI_API_KEY", "key")
+    monkeypatch.setenv("RAG_AGENT_CHAT_MODEL", "gpt-4.1-mini")
+    monkeypatch.setenv("RAG_AGENT_AGENT_MAX_RETRIEVALS", "3")
+
+    settings = Settings()
+
+    assert settings.chat_base_url == "https://api.example.test/v1"
+    assert settings.chat_api_key == "key"
+    assert settings.chat_model == "gpt-4.1-mini"
+    assert settings.agent_max_retrievals == 3
+    assert settings.langgraph_strict_msgpack is True
