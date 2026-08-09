@@ -6,6 +6,7 @@ from fastapi import APIRouter, FastAPI
 
 from app.agent.checkpoint import ensure_langgraph_security_env, setup_checkpointer
 from app.api.errors import register_error_handlers
+from app.api.routes.chat import router as chat_router
 from app.api.routes.conversations import router as conversations_router
 from app.api.routes.documents import router as documents_router
 from app.api.routes.ingestion_tasks import router as ingestion_tasks_router
@@ -50,6 +51,7 @@ def create_app() -> FastAPI:
 
     router.include_router(knowledge_bases_router)
     router.include_router(conversations_router)
+    router.include_router(chat_router)
     router.include_router(documents_router)
     router.include_router(ingestion_tasks_router)
     router.include_router(rag_router)

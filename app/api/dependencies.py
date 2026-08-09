@@ -36,6 +36,10 @@ from app.services.knowledge_base import (
 )
 from app.services.rag import RAGService
 from app.services.retrieval import HybridRetrievalService
+from app.services.sse_chat import (
+    ConversationRepositoryProtocol as SSEConversationRepositoryProtocol,
+)
+from app.services.sse_chat import SSEChatService
 
 SessionDependency = Annotated[
     AsyncSession,
@@ -318,4 +322,22 @@ async def get_agent_chat_service(
 AgentChatServiceDependency = Annotated[
     AgentChatService,
     Depends(get_agent_chat_service),
+]
+
+
+def get_sse_chat_service(
+    session: SessionDependency,
+    agent: AgentChatServiceDependency,
+) -> SSEChatService:
+    return SSEChatService(
+        conversations=cast(SSEConversationRepositoryProtocol, ConversationRepository(session)),
+        messages=MessageRepository(session),
+        agent=agent,
+        session=session,
+    )
+
+
+SSEChatServiceDependency = Annotated[
+    SSEChatService,
+    Depends(get_sse_chat_service),
 ]
