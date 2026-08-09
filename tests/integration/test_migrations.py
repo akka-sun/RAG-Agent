@@ -39,3 +39,23 @@ async def test_migration_creates_unique_active_task_index() -> None:
             assert "processing" in definition
     finally:
         await engine.dispose()
+
+
+async def test_migration_creates_conversation_message_and_citation_tables() -> None:
+    engine = create_async_engine(get_settings().test_database_url)
+    try:
+        async with engine.connect() as connection:
+            result = await connection.execute(
+                text(
+                    "SELECT table_name FROM information_schema.tables "
+                    "WHERE table_schema = 'public' "
+                    "AND table_name IN ('conversations', 'messages', 'message_citations')"
+                )
+            )
+            assert {row.table_name for row in result} == {
+                "conversations",
+                "messages",
+                "message_citations",
+            }
+    finally:
+        await engine.dispose()
