@@ -145,13 +145,13 @@ class IngestionService:
                 raise DocumentCleanupFailedError(f"Ingestion cleanup failed ({details})") from exc
             raise
 
-    async def _embed_texts(self, texts: list[str]) -> list[list[float]]:
+    async def _embed_texts(self, texts: list[str]) -> list[tuple[float, ...]]:
         embed_texts = getattr(self.embedder, "embed_texts", None)
         if embed_texts is not None:
-            vectors = await embed_texts(texts)
+            raw_vectors = await embed_texts(texts)
         else:
-            vectors = [self.embedder.embed(text) for text in texts]
-        if len(vectors) != len(texts):
+            raw_vectors = [self.embedder.embed(text) for text in texts]
+        if len(raw_vectors) != len(texts):
             msg = "embedding client returned a different number of vectors"
             raise ValueError(msg)
-        return vectors
+        return [tuple(float(value) for value in vector) for vector in raw_vectors]

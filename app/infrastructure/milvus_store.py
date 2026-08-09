@@ -1,3 +1,5 @@
+# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false, reportUnknownArgumentType=false
+
 from __future__ import annotations
 
 import asyncio
@@ -61,7 +63,7 @@ class MilvusChunkStore:
     ) -> None:
         self._collection_name = collection_name
         self._embedding_dimension = embedding_dimension
-        self._client = client or MilvusClient(uri=uri, token=token)
+        self._client = client or MilvusClient(uri=uri, token=token or "")
 
     async def ensure_collection(self) -> None:
         await asyncio.to_thread(self._ensure_collection)
@@ -74,32 +76,38 @@ class MilvusChunkStore:
     async def search_dense(
         self, knowledge_base_id: uuid.UUID, query_vector: Sequence[float], limit: int
     ) -> list[RetrievedChunk]:
-        hits = await asyncio.to_thread(
-            self._client.search,
-            collection_name=self._collection_name,
-            data=[list(query_vector)],
-            anns_field=DENSE_VECTOR_FIELD,
-            filter=_knowledge_base_filter(knowledge_base_id),
-            limit=limit,
-            output_fields=OUTPUT_FIELDS,
-            search_params={"metric_type": "COSINE", "params": {}},
+        hits = cast(
+            list[list[dict[str, object]]],
+            await asyncio.to_thread(
+                self._client.search,
+                collection_name=self._collection_name,
+                data=[list(query_vector)],
+                anns_field=DENSE_VECTOR_FIELD,
+                filter=_knowledge_base_filter(knowledge_base_id),
+                limit=limit,
+                output_fields=OUTPUT_FIELDS,
+                search_params={"metric_type": "COSINE", "params": {}},
+            ),
         )
-        return _map_hits(cast(list[list[dict[str, object]]], hits), source="dense")
+        return _map_hits(hits, source="dense")
 
     async def search_sparse(
         self, knowledge_base_id: uuid.UUID, query_text: str, limit: int
     ) -> list[RetrievedChunk]:
-        hits = await asyncio.to_thread(
-            self._client.search,
-            collection_name=self._collection_name,
-            data=[query_text],
-            anns_field=SPARSE_VECTOR_FIELD,
-            filter=_knowledge_base_filter(knowledge_base_id),
-            limit=limit,
-            output_fields=OUTPUT_FIELDS,
-            search_params={"params": {}},
+        hits = cast(
+            list[list[dict[str, object]]],
+            await asyncio.to_thread(
+                self._client.search,
+                collection_name=self._collection_name,
+                data=[query_text],
+                anns_field=SPARSE_VECTOR_FIELD,
+                filter=_knowledge_base_filter(knowledge_base_id),
+                limit=limit,
+                output_fields=OUTPUT_FIELDS,
+                search_params={"params": {}},
+            ),
         )
-        return _map_hits(cast(list[list[dict[str, object]]], hits), source="sparse")
+        return _map_hits(hits, source="sparse")
 
     async def delete_document(
         self,

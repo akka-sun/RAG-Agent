@@ -2,6 +2,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 
 
+def _empty_metadata() -> dict[str, object]:
+    return {}
+
+
 @dataclass(frozen=True, slots=True)
 class RetrievedChunk:
     chunk_id: str
@@ -10,7 +14,7 @@ class RetrievedChunk:
     rank: int
     score: float
     source: str
-    metadata: Mapping[str, object] = field(default_factory=dict)
+    metadata: Mapping[str, object] = field(default_factory=_empty_metadata)
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,7 +28,7 @@ class RankedChunk:
     dense_score: float | None = None
     sparse_score: float | None = None
     rerank_score: float | None = None
-    metadata: Mapping[str, object] = field(default_factory=dict)
+    metadata: Mapping[str, object] = field(default_factory=_empty_metadata)
 
 
 def rrf_score(rank: int, k: int = 60) -> float:

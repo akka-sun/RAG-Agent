@@ -275,10 +275,11 @@
 | 2026-07-18 | 阶段 0 | 容器化骨架、强类型配置、FastAPI 应用与存活检查 | pytest 3 passed、Ruff 通过、Pyright 0 errors、真实 HTTP 返回 status=ok、容器 healthy | Docker Compose、Pydantic Settings、FastAPI 路由、配置缓存与测试隔离 | async 的适用条件、live 与 ready 的边界、TestClient 与真实 HTTP 的测试分层 |
 | 2026-07-20 | 阶段 1 | PostgreSQL、异步 ORM、Alembic、知识库 CRUD、统一错误响应 | 空库迁移至唯一 head、10 个单元测试和 5 个集成测试通过、Ruff 与 Pyright 通过、真实 HTTP CRUD 返回 201/200/200/204 | flush、commit、rollback、refresh 与 Service 事务边界 | 完整请求链路、Route/Service/Repository 职责、Engine/连接池/Connection/Session、并发唯一约束、Alembic 与 create_all、单元与集成测试分层 |
 | 2026-07-24 | 阶段 2 | Markdown/TXT 字符分块、确定性 Hashing Embedding、余弦检索、进程内知识库隔离、引用回答与最小 RAG API | 31 个单元测试和 8 个集成测试通过、Ruff 与 Pyright 通过、真实 HTTP 创建/摄取/查询/删除返回 201/201/200/204、引用文档 ID 一致 | chunk size 与 overlap 取舍、归一化向量点积、Hashing 与语义 Embedding 的边界、召回与生成问题区分、检索前知识库隔离 | 完整摄取调用链、进程内 Store 的多进程与持久化边界、查询链路中的引用组装细节 |
+| 2026-08-09 | 阶段 4 | Milvus standalone Docker、PyMilvus Collection/BM25、Dense+BM25 双路召回、RRF 融合、远程 Embedding/Reranker 客户端、worker 写入 Milvus、retry/delete 清理 Milvus、`/rag/query` 混合检索接线 | `docker compose config --quiet` 通过；Milvus 真实集成测试通过；阶段 4 相关 32 个 unit/integration/e2e 测试通过；外部模型测试默认 skip，待配置真实 key 后运行 `pytest -m external` | Milvus schema/index/BM25 Function、知识库过滤、RRF 不混加原始分、PyMilvus 删除后 flush、默认测试与真实外部 API 验证分层 | 真实 Reranker 服务响应差异、生产 Embedding 维度迁移、LangGraph Agent 如何消费检索证据 |
 
 ## 5. 当前任务
 
-下一步进入阶段 3：设计 MinIO、Redis、ARQ 和 PostgreSQL 协作的异步文档摄取链路，明确任务状态、幂等、失败重试和跨存储补偿边界。
+下一步进入阶段 5：在 Milvus 混合检索基础上接入 LangGraph Agent、真实 Chat API 和 PostgreSQL Checkpointer，完成可恢复的 Agentic RAG 回答链路。
 
 ## 6. 阶段 3 验收记录（2026-08-06）
 
@@ -297,3 +298,22 @@
 7. **ARQ job 唯一性和数据库任务状态分别解决什么？** 固定 job ID 降低同一任务重复入队；数据库 claim 与状态机处理重复投递、并发执行、进度查询和历史审计。前者不能替代后者。
 
 下一次复习时，请不看代码画出上传、Worker、重试和删除四条数据流，并为每个跨存储步骤说明失败后留下的状态和恢复入口。
+
+## 7. 阶段 4 验收记录（2026-08-09）
+
+真实 Docker Compose 环境已加入 Milvus standalone 三件套：`milvus-etcd`、`milvus-minio` 和 `milvus-standalone`。业务 MinIO 继续保存原文和解析结果，Redis 退回到 ARQ 队列职责，生产文档索引由 Milvus Collection `rag_chunks` 承担。
+
+阶段 4 已验证以下链路：worker 完成解析、分块和 Embedding 后写入 Milvus；Milvus Collection 同时保存 dense vector、BM25 sparse 字段和引用元数据；`/rag/query` 在同一知识库过滤条件下执行 dense 与 BM25 双路召回，使用 RRF 融合候选并调用远程 Reranker 客户端；文档 retry 和 delete 会先清理 Milvus chunk，再处理后续队列、对象存储和数据库状态。
+
+验证证据只记录实际执行结果：Milvus 官方 standalone 拓扑已在 Docker 中启动并通过健康检查；PyMilvus 集成测试证明两个知识库写入同名查询内容时不会串库；端到端测试证明上传、worker 摄取、Milvus 可检索、重复执行幂等、删除后 PostgreSQL/MinIO/Milvus 全部清理。外部 Embedding 与 Reranker 的真实 API 测试已加 `external` 标记，默认跳过；配置真实凭据后使用 `docker compose exec api uv run --no-sync pytest -m external -v` 验证。
+
+### 学习复盘
+
+1. **为什么 Redis 不再适合作生产检索索引？** Redis 阶段只证明跨进程共享索引和任务链路；生产检索需要向量索引、BM25、过滤表达式、批量写入和可维护 schema，这些职责更适合 Milvus。
+2. **为什么 Dense 与 BM25 不能直接相加分数？** 两者分数尺度不同，dense 分数通常来自向量距离或相似度，BM25 来自词项统计；直接相加会让某一路尺度主导排序。RRF 使用名次而不是原始分数融合，适合异构召回。
+3. **为什么每条 Milvus 查询都带 `knowledge_base_id` 过滤？** 多知识库隔离不能只靠 API 层；索引查询本身必须过滤，否则相同关键词或向量相近的其它知识库文档会被召回。
+4. **为什么 delete 后要 flush？** Milvus delete 的可见性不是普通 Python 内存删除；flush 后后续搜索才能稳定看到清理结果，端到端删除验收也因此更可靠。
+5. **为什么外部 API 测试默认 skip？** 本地质量门禁应稳定、可重复、不会误消耗额度；真实模型连通性属于显式外部验收，必须由 `RAG_AGENT_EXTERNAL_TESTS_ENABLED=true` 和真实凭据开启。
+6. **为什么 worker 保留本地 Hashing fallback？** 这是开发/测试模式的明确安全路径；生产或配置了 API key 时使用真实 OpenAI-compatible EmbeddingClient，避免默认本地测试依赖付费服务。
+
+下一次复习时，请手算一个 dense 排名 `[a,b]` 与 BM25 排名 `[b,c]` 的 RRF 融合结果，并解释为什么 `b` 会排在最前。

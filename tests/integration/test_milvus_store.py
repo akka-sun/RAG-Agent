@@ -1,5 +1,8 @@
+# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false, reportUnknownArgumentType=false
+
 import asyncio
 import uuid
+from contextlib import suppress
 
 import pytest
 from pymilvus import MilvusClient
@@ -66,13 +69,11 @@ async def test_milvus_store_isolates_knowledge_bases() -> None:
                 )
             ]
         )
-        await asyncio.to_thread(client.flush, collection_name)
-
         dense_results = await store.search_dense(first_kb, [1.0, 0.0, 0.0], limit=10)
         sparse_results = await store.search_sparse(first_kb, "refund policy", limit=10)
 
         assert {result.document_id for result in dense_results} == {str(first_document)}
         assert {result.document_id for result in sparse_results} == {str(first_document)}
     finally:
-        if client.has_collection(collection_name):
+        with suppress(Exception):
             await asyncio.to_thread(client.drop_collection, collection_name)

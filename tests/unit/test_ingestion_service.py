@@ -184,7 +184,7 @@ async def test_run_persists_exact_progress_payload_and_processing_order(
     assert json.loads(payload) == {"text": "hello world"}
     assert content_type == "application/json"
     assert index.calls[0][1] == did
-    assert index.calls[0][2][0].vector == [11.0]
+    assert list(index.calls[0][2][0].vector) == [11.0]
     assert all(parsed is None for _, value, _, parsed in factory.commits if value < 100)
     assert document.parsed_object_key == parsed_key
 
@@ -204,7 +204,7 @@ async def test_run_uses_async_embedding_client_for_batch_vectors(
 
     assert "embed_batch" in events
     assert "embed" not in events
-    assert index.calls[0][2][0].vector == [11.0]
+    assert list(index.calls[0][2][0].vector) == [11.0]
 
 
 @pytest.mark.asyncio

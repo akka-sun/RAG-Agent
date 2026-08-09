@@ -42,7 +42,8 @@ class EmbeddingClient:
         if not isinstance(embeddings, list):
             msg = "embedding response must contain a data list"
             raise ValueError(msg)
-        return [_embedding_from_item(item) for item in embeddings]
+        embedding_items = cast(list[object], embeddings)
+        return [_embedding_from_item(item) for item in embedding_items]
 
     async def _post(self, url: str, payload: Mapping[str, object]) -> httpx.Response:
         headers = {"Authorization": f"Bearer {self._api_key}"}
@@ -102,14 +103,19 @@ class RerankerClient:
             raise ValueError(msg)
 
         reranked: list[RankedChunk] = []
-        for item in results:
+        result_items = cast(list[object], results)
+        for item in result_items:
             if not isinstance(item, Mapping):
                 continue
-            index = _int_value(item.get("index"))
+            result_item = cast(Mapping[str, object], item)
+            index = _int_value(result_item.get("index"))
             if index is None or index < 0 or index >= len(chunks):
                 continue
             score = _float_value(
-                item.get("relevance_score", item.get("score", item.get("rerank_score", 0.0)))
+                result_item.get(
+                    "relevance_score",
+                    result_item.get("score", result_item.get("rerank_score", 0.0)),
+                )
             )
             reranked.append(replace(chunks[index], rerank_score=score))
 
@@ -156,11 +162,13 @@ def _embedding_from_item(item: object) -> list[float]:
     if not isinstance(item, Mapping):
         msg = "embedding item must be a JSON object"
         raise ValueError(msg)
-    embedding = item.get("embedding")
+    item_mapping = cast(Mapping[str, object], item)
+    embedding = item_mapping.get("embedding")
     if not isinstance(embedding, list):
         msg = "embedding item must contain an embedding list"
         raise ValueError(msg)
-    return [_float_value(value) for value in embedding]
+    values = cast(list[object], embedding)
+    return [_float_value(value) for value in values]
 
 
 def _int_value(value: object) -> int | None:
