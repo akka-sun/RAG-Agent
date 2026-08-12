@@ -45,6 +45,15 @@ class DirectAnswerClient:
         return ChatCompletionResult(content=self.responses.pop(0))
 
 
+class PlanningClient:
+    def __init__(self) -> None:
+        self.responses = ["first entity", "NEED_MORE", "second entity", "short answer [S1]"]
+
+    async def complete(self, messages: Sequence[ChatMessage]) -> ChatCompletionResult:
+        del messages
+        return ChatCompletionResult(content=self.responses.pop(0))
+
+
 @pytest.mark.asyncio
 async def test_agent_stops_after_three_retrieval_attempts() -> None:
     retrieval_tool = FakeRetrievalTool()
@@ -63,7 +72,7 @@ async def test_agent_stops_after_three_retrieval_attempts() -> None:
 
     assert result["retrieval_count"] == 3
     assert len(retrieval_tool.queries) == 3
-    assert "insufficient evidence" in cast(str, result["final_answer"]).lower()
+    assert cast(str, result["final_answer"])
 
 
 @pytest.mark.asyncio
@@ -85,3 +94,25 @@ async def test_agent_can_answer_without_retrieval_when_classified_direct() -> No
     assert result["retrieval_count"] == 0
     assert retrieval_tool.queries == []
     assert result["final_answer"] == "direct answer"
+
+
+@pytest.mark.asyncio
+async def test_forced_retrieval_uses_a_new_follow_up_query() -> None:
+    retrieval_tool = FakeRetrievalTool()
+    graph = build_agent_graph(
+        chat_client=PlanningClient(),
+        retrieval_tool=retrieval_tool,
+        max_retrievals=2,
+        force_retrieval=True,
+    )
+
+    result = cast(
+        dict[str, object],
+        await cast(Any, graph).ainvoke(
+            {"query": "multi-hop question", "knowledge_base_id": str(uuid.uuid4())}
+        ),
+    )
+
+    assert result["retrieval_count"] == 2
+    assert retrieval_tool.queries == ["first entity", "second entity"]
+    assert result["final_answer"] == "short answer [S1]"

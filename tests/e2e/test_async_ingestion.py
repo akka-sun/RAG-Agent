@@ -71,7 +71,7 @@ async def _wait_for_indexed_document(
     deadline = time.monotonic() + POLL_TIMEOUT_SECONDS
     last_chunks: list[RetrievedChunk] = []
     while time.monotonic() < deadline:
-        chunks = await chunk_store.search_sparse(knowledge_base_id, "Acceptance", limit=10)
+        chunks = await chunk_store.search_sparse(knowledge_base_id, "Real", limit=10)
         document_chunks = [chunk for chunk in chunks if chunk.document_id == document_id]
         if len(document_chunks) == expected_count:
             return chunks
@@ -91,7 +91,7 @@ async def _wait_for_deleted_document(
     deadline = time.monotonic() + POLL_TIMEOUT_SECONDS
     last_chunks: list[RetrievedChunk] = []
     while time.monotonic() < deadline:
-        chunks = await chunk_store.search_sparse(knowledge_base_id, "Acceptance", limit=10)
+        chunks = await chunk_store.search_sparse(knowledge_base_id, "Real", limit=10)
         if all(chunk.document_id != document_id for chunk in chunks):
             return
         last_chunks = chunks
@@ -171,7 +171,7 @@ async def test_async_ingestion_is_idempotent_and_delete_cleans_all_stores() -> N
             f"/knowledge-bases/{knowledge_base_id}/documents/{document_id}/parsed"
         )
         assert parsed_response.status_code == 200
-        assert parsed_response.json()["text"] == "# Acceptance\n\nReal async ingestion.\n"
+        assert parsed_response.json()["blocks"][0]["text"] == "Real async ingestion."
 
         kb_uuid = UUID(knowledge_base_id)
         chunks = await _wait_for_indexed_document(
@@ -188,7 +188,7 @@ async def test_async_ingestion_is_idempotent_and_delete_cleans_all_stores() -> N
             build_ingestion_embedder(settings),
         )
         await service.run(task_id, document_id)
-        chunks_after_reentry = await chunk_store.search_sparse(kb_uuid, "Acceptance", limit=10)
+        chunks_after_reentry = await chunk_store.search_sparse(kb_uuid, "Real", limit=10)
         assert [chunk.chunk_id for chunk in chunks_after_reentry] == [
             chunk.chunk_id for chunk in chunks
         ]

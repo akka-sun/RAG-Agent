@@ -7,11 +7,13 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from app.core.exceptions import DocumentCleanupFailedError
+from app.infrastructure.object_storage import image_asset_key
 from app.models.document import Document, DocumentStatus
 from app.models.ingestion_task import IngestionTask, TaskStage, TaskStatus
 from app.observability import get_langfuse_tracer, get_trace_context, set_trace_context
+from app.parsers.assets import rewrite_document_asset_urls
 from app.parsers.router import ParserRouter
-from app.parsers.types import ParsedDocument
+from app.parsers.types import ParsedAsset, ParsedDocument
 from app.rag.chunking import chunk_parsed_document
 from app.rag.embedding import HashingEmbedder
 from app.rag.types import IndexedChunk
@@ -37,12 +39,14 @@ class IngestionService:
         index: Any,
         embedder: Any | None = None,
         parser_router: ParserRouterProtocol | None = None,
+        api_v1_prefix: str = "/api/v1",
     ) -> None:
         self.session_factory = session_factory
         self.storage = storage
         self.index = index
         self.embedder = embedder or HashingEmbedder()
         self.parser_router = parser_router or ParserRouter()
+        self.api_v1_prefix = api_v1_prefix.rstrip("/")
 
     async def _progress(
         self,
@@ -81,6 +85,7 @@ class IngestionService:
         tid, did = uuid.UUID(str(task_id)), uuid.UUID(str(document_id))
         parsed_key: str | None = None
         parsed_written = False
+        image_asset_keys: list[str] = []
         async with self.session_factory() as session:
             task = await IngestionTaskRepository(session).get(tid)
             if task is None or task.document_id != did or task.status == TaskStatus.COMPLETED:
@@ -96,6 +101,7 @@ class IngestionService:
                     raise ValueError("ingestion task or document not found")
                 source_key = document.source_object_key
                 filename = document.filename
+                kb_id = document.knowledge_base_id
                 parser_name = getattr(document, "parser_name", "local")
                 parsed_key = document.parsed_object_key or (
                     f"{source_key.rsplit('/source/', 1)[0]}/parsed.json"
@@ -119,6 +125,29 @@ class IngestionService:
                 parsed_document = await self.parser_router.parse_document(
                     filename, source, parser_name
                 )
+                stored_assets: list[ParsedAsset] = []
+                for asset in parsed_document.assets:
+                    if not asset.content:
+                        raise ValueError(f"parser returned empty image asset: {asset.source_path}")
+                    object_key = image_asset_key(
+                        kb_id,
+                        did,
+                        asset.asset_index,
+                        asset.source_path,
+                        asset.mime_type,
+                    )
+                    await self.storage.put(object_key, asset.content, asset.mime_type)
+                    image_asset_keys.append(object_key)
+                    url = (
+                        f"{self.api_v1_prefix}/knowledge-bases/{kb_id}/documents/"
+                        f"{did}/images/{asset.asset_index}"
+                    )
+                    stored_assets.append(
+                        asset.model_copy(
+                            update={"content": b"", "object_key": object_key, "url": url}
+                        )
+                    )
+                parsed_document = rewrite_document_asset_urls(parsed_document, stored_assets)
             parsed = parsed_document.model_dump_json().encode("utf-8")
             await self.storage.put(parsed_key, parsed, "application/json")
             parsed_written = True
@@ -181,6 +210,11 @@ class IngestionService:
                 await self._mark_failed(tid, did, str(exc))
             except Exception as mark_error:
                 compensation_failures.append(f"failed status: {mark_error}")
+            for object_key in image_asset_keys:
+                try:
+                    await self.storage.delete(object_key)
+                except Exception as delete_error:
+                    compensation_failures.append(f"image asset: {delete_error}")
             if parsed_written and parsed_key is not None:
                 try:
                     await self.storage.delete(parsed_key)

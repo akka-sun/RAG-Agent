@@ -1,5 +1,7 @@
 # RAG Agent
 
+PDF 图片处理链路见 [docs/pdf-image-processing.md](docs/pdf-image-processing.md)。
+
 RAG Agent 是一个用于学习和验证 Agentic RAG 核心链路的后端项目。当前实现以 FastAPI 提供 API，以 ARQ Worker 异步摄取文档，并使用 PostgreSQL 保存业务状态与 LangGraph checkpoint、MinIO 保存原文和结构化解析结果、Redis 承载 ARQ 队列、Milvus 保存生产级文档分块索引。模型能力通过 OpenAI-compatible API 接入；Milvus、MinerU、PaddleX 按 Docker 服务配置。
 
 ## 已实现能力
@@ -16,6 +18,7 @@ RAG Agent 是一个用于学习和验证 Agentic RAG 核心链路的后端项目
 - PostgreSQL LangGraph Checkpointer 启动时自动初始化，Agent 请求使用独立 thread checkpoint。
 - 结构化 JSON 日志、`x-trace-id` 请求透传、Worker/摄取/检索/Agent/SSE 阶段日志，以及可选 Langfuse Trace。
 - `app/evaluation` 与 `scripts/run_evaluation.py` 支持 Dense、BM25、RRF、Rerank 的 Recall@K、MRR 和引用命中率评估报告。
+- `scripts/run_benchmarks.py` 支持 NanoSciFact 检索、HotpotQA Agentic RAG、ChartQA 图片/PDF 处理的真实模型评测，详见 [`docs/real-benchmark-datasets.md`](docs/real-benchmark-datasets.md)。
 - 生产模式可通过 OpenAI-compatible Embedding API 写入真实向量；本地开发未配置 key 时保留 Hashing Embedding，避免默认测试消耗外部额度。
 - 数据库迁移，以及单元、集成和端到端测试。
 

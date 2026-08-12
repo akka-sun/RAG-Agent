@@ -6,3 +6,7 @@ __pycache__/
 .ruff_cache/
 .pyright/
 *.py[cod]
+output/
+reports/
+tmp/
+backend-agent-project-resume-pack.md

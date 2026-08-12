@@ -63,6 +63,8 @@ def test_stage4_external_service_settings(monkeypatch: pytest.MonkeyPatch, tmp_p
 
 def test_stage5_agent_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("RAG_AGENT_CHAT_BASE_URL", raising=False)
+    monkeypatch.delenv("RAG_AGENT_CHAT_API_KEY", raising=False)
     monkeypatch.setenv("RAG_AGENT_OPENAI_BASE_URL", "https://api.example.test/v1")
     monkeypatch.setenv("RAG_AGENT_OPENAI_API_KEY", "key")
     monkeypatch.setenv("RAG_AGENT_CHAT_MODEL", "gpt-4.1-mini")

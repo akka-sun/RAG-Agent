@@ -152,6 +152,7 @@ async def test_document_management_routes_delegate_to_service(
     service.get_task.return_value = task
     service.download_source.return_value = ("notes.md", "text/markdown", b"# notes")
     service.download_parsed.return_value = b'{"text":"notes"}'
+    service.download_image.return_value = ("image/png", b"png-data")
     service.retry.return_value = IngestionTask(
         id=uuid.uuid4(),
         document_id=document_id,
@@ -173,6 +174,9 @@ async def test_document_management_routes_delegate_to_service(
     parsed = await client.get(
         f"/api/v1/knowledge-bases/{knowledge_base_id}/documents/{document_id}/parsed"
     )
+    image = await client.get(
+        f"/api/v1/knowledge-bases/{knowledge_base_id}/documents/{document_id}/images/0"
+    )
     retried = await client.post(
         f"/api/v1/knowledge-bases/{knowledge_base_id}/documents/{document_id}/retry"
     )
@@ -185,6 +189,9 @@ async def test_document_management_routes_delegate_to_service(
     assert source.headers["content-type"].startswith("text/markdown")
     assert "notes.md" in source.headers["content-disposition"]
     assert parsed.content == b'{"text":"notes"}'
+    assert image.content == b"png-data"
+    assert image.headers["content-type"].startswith("image/png")
+    service.download_image.assert_awaited_once_with(knowledge_base_id, document_id, 0)
     assert retried.status_code == 202
     assert retried.json()["status"] == "pending"
     assert deleted.status_code == 204
@@ -218,6 +225,7 @@ async def test_delete_cleans_external_resources_before_database() -> None:
     tasks.has_active_task.return_value = False
     session = AsyncMock()
     storage = AsyncMock()
+    storage.get.return_value = b"{}"
     index = AsyncMock()
     service = DocumentService(AsyncMock(), documents, tasks, session, storage, AsyncMock(), index)
 
@@ -228,6 +236,33 @@ async def test_delete_cleans_external_resources_before_database() -> None:
     tasks.delete_by_document.assert_awaited_once_with(document.id)
     documents.delete.assert_awaited_once_with(document)
     session.commit.assert_awaited_once()
+
+
+async def test_delete_removes_parser_assets_listed_in_parsed_document() -> None:
+    knowledge_base_id = uuid.uuid4()
+    document = Document(
+        id=uuid.uuid4(),
+        knowledge_base_id=knowledge_base_id,
+        source_object_key="source",
+        parsed_object_key="parsed",
+    )
+    documents = AsyncMock()
+    documents.get_for_update.return_value = document
+    tasks = AsyncMock()
+    tasks.has_active_task.return_value = False
+    storage = AsyncMock()
+    storage.get.return_value = b'{"assets":[{"object_key":"images/0000.png"}]}'
+    service = DocumentService(
+        AsyncMock(), documents, tasks, AsyncMock(), storage, AsyncMock(), AsyncMock()
+    )
+
+    await service.delete(knowledge_base_id, document.id)
+
+    assert [call.args[0] for call in storage.delete.await_args_list] == [
+        "images/0000.png",
+        "parsed",
+        "source",
+    ]
 
 
 async def test_delete_cleanup_failure_preserves_database_records() -> None:

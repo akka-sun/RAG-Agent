@@ -61,7 +61,11 @@ def build_ingestion_embedder(settings: Settings) -> EmbeddingClient | HashingEmb
 def build_parser_router(settings: Settings) -> ParserRouter:
     return ParserRouter(
         default_pdf_parser=settings.default_pdf_parser,
-        mineru=MinerUParser(base_url=settings.mineru_base_url),
+        mineru=MinerUParser(
+            base_url=settings.mineru_base_url,
+            api_key=settings.mineru_api_key,
+            model_version=settings.mineru_model_version,
+        ),
         paddlex=PaddleXParser(base_url=settings.paddlex_base_url),
     )
 
@@ -78,12 +82,14 @@ async def on_startup(ctx: dict[str, object]) -> None:
     )
     ctx["redis"] = redis
     ctx["engine"] = engine
+    storage = MinioObjectStorage(minio, settings.minio_bucket)
     ctx["ingestion_service"] = IngestionService(
         async_session_factory,
-        MinioObjectStorage(minio, settings.minio_bucket),
+        storage,
         build_document_index(settings),
         build_ingestion_embedder(settings),
         parser_router=build_parser_router(settings),
+        api_v1_prefix=settings.api_v1_prefix,
     )
 
 

@@ -94,6 +94,21 @@ async def download_parsed(
     return Response(content=content, media_type="application/json")
 
 
+@router.get("/{document_id}/images/{asset_index}")
+async def download_image(
+    knowledge_base_id: uuid.UUID,
+    document_id: uuid.UUID,
+    asset_index: int,
+    service: DocumentServiceDependency,
+) -> Response:
+    mime_type, content = await service.download_image(
+        knowledge_base_id,
+        document_id,
+        asset_index,
+    )
+    return Response(content=content, media_type=mime_type)
+
+
 @router.post(
     "/{document_id}/retry",
     response_model=IngestionTaskResponse,

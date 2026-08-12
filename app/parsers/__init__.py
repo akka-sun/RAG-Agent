@@ -1,4 +1,5 @@
 from app.parsers.types import (
+    ParsedAsset,
     ParsedBlock,
     ParsedDocument,
     ParserName,
@@ -7,6 +8,7 @@ from app.parsers.types import (
 )
 
 __all__ = [
+    "ParsedAsset",
     "ParsedBlock",
     "ParsedDocument",
     "ParserName",

@@ -28,11 +28,30 @@ class ParsedBlock(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ParsedAsset(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    asset_index: int = Field(ge=0)
+    source_path: str
+    mime_type: str
+    content: bytes = Field(default=b"", exclude=True, repr=False)
+    object_key: str | None = None
+    url: str | None = None
+    page_number: int | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+def _empty_assets() -> list[ParsedAsset]:
+    return []
+
+
 class ParsedDocument(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     parser: ParserName
     source_format: SourceFormat
     blocks: list[ParsedBlock]
+    markdown: str | None = None
+    assets: list[ParsedAsset] = Field(default_factory=_empty_assets)
     parser_version: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)

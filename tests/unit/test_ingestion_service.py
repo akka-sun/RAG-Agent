@@ -7,7 +7,7 @@ import pytest
 from app.core.exceptions import DocumentCleanupFailedError
 from app.models.document import DocumentStatus
 from app.models.ingestion_task import TaskStage, TaskStatus
-from app.parsers.types import ParsedBlock, ParsedDocument
+from app.parsers.types import ParsedAsset, ParsedBlock, ParsedDocument
 from app.services import ingestion as ingestion_module
 from app.services.ingestion import IngestionService
 
@@ -166,6 +166,40 @@ class ParserRouter:
         )
 
 
+class AssetParserRouter:
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+        self.calls: list[tuple[str, bytes, str | None]] = []
+
+    async def parse_document(
+        self,
+        filename: str,
+        content: bytes,
+        parser: str | None,
+    ) -> ParsedDocument:
+        self.events.append("parse")
+        self.calls.append((filename, content, parser))
+        return ParsedDocument(
+            parser="mineru",
+            source_format="pdf",
+            markdown="Policy diagram ![flow](images/flow.png)",
+            blocks=[
+                ParsedBlock(
+                    text="Policy diagram ![flow](images/flow.png)",
+                    block_index=0,
+                )
+            ],
+            assets=[
+                ParsedAsset(
+                    asset_index=0,
+                    source_path="images/flow.png",
+                    mime_type="image/png",
+                    content=b"\x89PNG\r\n\x1a\n",
+                )
+            ],
+        )
+
+
 def make_entities() -> tuple[uuid.UUID, uuid.UUID, Any, Any]:
     tid, did, kb_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     task: Any = Obj()
@@ -271,6 +305,67 @@ async def test_run_uses_document_parser_selection_and_indexes_structured_metadat
     assert indexed_chunk.section == "Policy"
     assert indexed_chunk.metadata["parser"] == "mineru"
     assert indexed_chunk.metadata["block_index"] == 3
+
+
+@pytest.mark.asyncio
+async def test_pdf_images_are_stored_and_markdown_links_enter_existing_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tid, did, task, document = make_entities()
+    document.filename = "policy.pdf"
+    document.parser_name = "mineru"
+    events: list[str] = []
+    storage = Storage(events, value=b"%PDF")
+    index = Index(events)
+    parser_router = AssetParserRouter(events)
+    monkeypatch.setattr(ingestion_module, "IngestionTaskRepository", Repo)
+
+    await IngestionService(
+        Factory(task, document),
+        storage,
+        index,
+        AsyncEmbedder(events),
+        parser_router=parser_router,
+    ).run(tid, did)
+
+    assert parser_router.calls == [("policy.pdf", b"%PDF", "mineru")]
+    image_put = storage.puts[0]
+    assert image_put[0].endswith(f"/documents/{did}/images/0000.png")
+    assert image_put[1:] == (b"\x89PNG\r\n\x1a\n", "image/png")
+    parsed_put = next(item for item in storage.puts if item[2] == "application/json")
+    parsed_payload = json.loads(parsed_put[1])
+    expected_url = f"/api/v1/knowledge-bases/{document.knowledge_base_id}/documents/{did}/images/0"
+    assert parsed_payload["markdown"] == f"Policy diagram ![flow]({expected_url})"
+    assert parsed_payload["assets"][0]["url"] == expected_url
+    assert "content" not in parsed_payload["assets"][0]
+    assert expected_url in index.calls[0][2][0].text
+
+
+@pytest.mark.asyncio
+async def test_index_failure_deletes_parser_assets_and_parsed_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tid, did, task, document = make_entities()
+    document.filename = "policy.pdf"
+    document.parser_name = "mineru"
+    events: list[str] = []
+    storage = Storage(events, value=b"%PDF")
+    parser_router = AssetParserRouter(events)
+    monkeypatch.setattr(ingestion_module, "IngestionTaskRepository", Repo)
+
+    with pytest.raises(RuntimeError, match="index failed"):
+        await IngestionService(
+            Factory(task, document),
+            storage,
+            Index(events, fail=True),
+            AsyncEmbedder(events),
+            parser_router=parser_router,
+        ).run(tid, did)
+
+    assert storage.deletes == [
+        f"knowledge-bases/{document.knowledge_base_id}/documents/{did}/images/0000.png",
+        "kb/parsed.json",
+    ]
 
 
 @pytest.mark.asyncio

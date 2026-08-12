@@ -38,10 +38,14 @@ async def test_mineru_parser_calls_real_service() -> None:
     if not _external_tests_enabled():
         pytest.skip("external parser tests are disabled")
     settings = Settings()
-    if not await _service_is_running(settings.mineru_base_url):
+    if not settings.mineru_api_key and not await _service_is_running(settings.mineru_base_url):
         pytest.skip("MinerU parser service is not running")
 
-    parsed = await MinerUParser(base_url=settings.mineru_base_url).parse_pdf(
+    parsed = await MinerUParser(
+        base_url=settings.mineru_base_url,
+        api_key=settings.mineru_api_key,
+        model_version=settings.mineru_model_version,
+    ).parse_pdf(
         "minimal.pdf",
         _MINIMAL_PDF,
     )

@@ -19,6 +19,7 @@ from app.infrastructure.queue import IngestionQueue
 from app.models.document import Document, DocumentStatus
 from app.models.ingestion_task import IngestionTask, TaskStatus
 from app.models.knowledge_base import KnowledgeBase
+from app.parsers.assets import asset_keys_from_parsed, stored_asset_from_parsed
 from app.parsers.router import ParserRouter
 from app.schemas.documents import normalize_content_type, validate_upload
 from app.services.knowledge_base import KnowledgeBaseNotFoundError
@@ -122,6 +123,23 @@ class DocumentService:
         except Exception as exc:
             raise DocumentStorageUnavailableError("Document storage is unavailable") from exc
 
+    async def download_image(
+        self,
+        knowledge_base_id: uuid.UUID,
+        document_id: uuid.UUID,
+        asset_index: int,
+    ) -> tuple[str, bytes]:
+        parsed = await self.download_parsed(knowledge_base_id, document_id)
+        asset = stored_asset_from_parsed(parsed, asset_index)
+        if asset is None:
+            raise ParsedDocumentNotReadyError("Image asset is not available")
+        object_key, mime_type = asset
+        try:
+            content = await self._storage.get(object_key)
+        except Exception as exc:
+            raise DocumentStorageUnavailableError("Document storage is unavailable") from exc
+        return mime_type, content
+
     async def retry(self, knowledge_base_id: uuid.UUID, document_id: uuid.UUID) -> IngestionTask:
         document = await self.documents.get_for_update(document_id, knowledge_base_id)
         if document is None:
@@ -177,7 +195,13 @@ class DocumentService:
         if active_status or await self.tasks.has_active_task(document.id):
             raise DocumentNotRetryableError("Active documents cannot be deleted")
         try:
+            image_asset_keys: list[str] = []
+            if document.parsed_object_key is not None:
+                parsed = await self._storage.get(document.parsed_object_key)
+                image_asset_keys = asset_keys_from_parsed(parsed)
             await self._index.delete_document(knowledge_base_id, document_id)
+            for object_key in image_asset_keys:
+                await self._storage.delete(object_key)
             if document.parsed_object_key is not None:
                 await self._storage.delete(document.parsed_object_key)
             await self._storage.delete(document.source_object_key)
