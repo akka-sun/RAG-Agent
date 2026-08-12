@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import io
+import mimetypes
+from pathlib import PurePosixPath
 from typing import BinaryIO, Protocol
 from uuid import UUID
 
@@ -56,6 +58,21 @@ def source_key(knowledge_base_id: UUID, document_id: UUID, filename: str) -> str
 
 def parsed_key(knowledge_base_id: UUID, document_id: UUID) -> str:
     return f"{_document_prefix(knowledge_base_id, document_id)}/parsed.json"
+
+
+def image_asset_key(
+    knowledge_base_id: UUID,
+    document_id: UUID,
+    asset_index: int,
+    source_path: str,
+    mime_type: str,
+) -> str:
+    if asset_index < 0:
+        raise ValueError("asset_index must be non-negative")
+    suffix = PurePosixPath(source_path.replace("\\", "/")).suffix.lower()
+    if not suffix or len(suffix) > 10 or not suffix[1:].isalnum():
+        suffix = mimetypes.guess_extension(mime_type) or ".bin"
+    return f"{_document_prefix(knowledge_base_id, document_id)}/images/{asset_index:04d}{suffix}"
 
 
 class MinioObjectStorage:

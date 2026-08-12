@@ -16,6 +16,7 @@ from app.core.exceptions import (
     ParsedDocumentNotReadyError,
     UnsupportedDocumentError,
 )
+from app.services.conversations import ConversationNotFoundError
 from app.services.knowledge_base import (
     KnowledgeBaseNameConflictError,
     KnowledgeBaseNotFoundError,
@@ -82,6 +83,20 @@ def register_error_handlers(app: FastAPI) -> None:
             content=error_body(
                 "knowledge_base_name_conflict",
                 "知识库名称已存在",
+            ),
+        )
+
+    @app.exception_handler(ConversationNotFoundError)
+    async def handle_conversation_not_found(  # pyright: ignore[reportUnusedFunction]
+        request: Request,
+        exc: ConversationNotFoundError,
+    ) -> JSONResponse:
+        del request, exc
+        return JSONResponse(
+            status_code=404,
+            content=error_body(
+                "conversation_not_found",
+                "会话不存在",
             ),
         )
 

@@ -163,30 +163,33 @@ from sqlalchemy import URL
 在 `Settings` 中增加：
 
 ```python
-    postgres_user: str = "rag_agent"
-    postgres_password: str = "rag_agent"
-    postgres_host: str = "postgres"
-    postgres_port: int = 5432
-    postgres_db: str = "rag_agent"
-    postgres_test_db: str = "rag_agent_test"
+postgres_user: str = "rag_agent"
+postgres_password: str = "rag_agent"
+postgres_host: str = "postgres"
+postgres_port: int = 5432
+postgres_db: str = "rag_agent"
+postgres_test_db: str = "rag_agent_test"
 
-    @property
-    def database_url(self) -> URL:
-        return self._build_database_url(self.postgres_db)
 
-    @property
-    def test_database_url(self) -> URL:
-        return self._build_database_url(self.postgres_test_db)
+@property
+def database_url(self) -> URL:
+    return self._build_database_url(self.postgres_db)
 
-    def _build_database_url(self, database: str) -> URL:
-        return URL.create(
-            drivername="postgresql+asyncpg",
-            username=self.postgres_user,
-            password=self.postgres_password,
-            host=self.postgres_host,
-            port=self.postgres_port,
-            database=database,
-        )
+
+@property
+def test_database_url(self) -> URL:
+    return self._build_database_url(self.postgres_test_db)
+
+
+def _build_database_url(self, database: str) -> URL:
+    return URL.create(
+        drivername="postgresql+asyncpg",
+        username=self.postgres_user,
+        password=self.postgres_password,
+        host=self.postgres_host,
+        port=self.postgres_port,
+        database=database,
+    )
 ```
 
 - [ ] **Step 5: 增加 PostgreSQL 与测试数据库初始化**
@@ -473,9 +476,7 @@ class KnowledgeBase(Base):
         ),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(200), nullable=False, unique=True)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     embedding_model: Mapped[str] = mapped_column(String(200), nullable=False)

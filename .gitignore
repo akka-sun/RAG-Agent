@@ -1,2 +1,12 @@
 .worktrees/
 .env
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.pyright/
+*.py[cod]
+output/
+reports/
+tmp/
+backend-agent-project-resume-pack.md

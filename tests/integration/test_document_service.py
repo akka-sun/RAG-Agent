@@ -63,6 +63,7 @@ class FixedQueue:
 async def make_service(
     session: AsyncSession,
     queue: FixedQueue,
+    index: MemoryIndex | None = None,
 ) -> tuple[DocumentService, KnowledgeBase, MemoryStorage]:
     knowledge_base = KnowledgeBase(
         name=f"service-{uuid.uuid4()}",
@@ -81,6 +82,7 @@ async def make_service(
             session=session,
             storage=storage,
             queue=queue,
+            index=index,
         ),
         knowledge_base,
         storage,
@@ -246,6 +248,45 @@ async def test_concurrent_retry_creates_only_one_active_task(
         assert active_count == 1
     finally:
         await engine.dispose()
+
+
+async def test_retry_deletes_existing_index_before_enqueue(
+    db_session: AsyncSession,
+) -> None:
+    knowledge_base = KnowledgeBase(
+        name=f"retry-cleanup-{uuid.uuid4()}",
+        description="",
+        embedding_model="hashing",
+        embedding_dimension=64,
+    )
+    document = Document(
+        knowledge_base=knowledge_base,
+        filename="notes.md",
+        content_type="text/markdown",
+        size_bytes=5,
+        source_object_key="source",
+        status=DocumentStatus.FAILED,
+        error="previous failure",
+    )
+    db_session.add_all([knowledge_base, document])
+    await db_session.commit()
+    knowledge_base_id = knowledge_base.id
+    document_id = document.id
+    index = MemoryIndex()
+    index.documents.add((knowledge_base_id, document_id))
+    service = DocumentService(
+        KnowledgeBaseRepository(db_session),
+        DocumentRepository(db_session),
+        IngestionTaskRepository(db_session),
+        db_session,
+        MemoryStorage(),
+        FixedQueue(),
+        index,
+    )
+
+    await service.retry(knowledge_base_id, document_id)
+
+    assert (knowledge_base_id, document_id) not in index.documents
 
 
 @pytest.mark.parametrize("failure", ["index", "parsed", "source"])

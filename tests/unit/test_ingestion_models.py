@@ -24,13 +24,19 @@ async def db_session() -> AsyncIterator[AsyncSession]:
     try:
         async with session_factory() as session:
             await session.execute(
-                text("TRUNCATE TABLE ingestion_tasks, documents, knowledge_bases")
+                text(
+                    "TRUNCATE TABLE message_citations, messages, conversations, "
+                    "ingestion_tasks, documents, knowledge_bases"
+                )
             )
             await session.commit()
             yield session
             await session.rollback()
             await session.execute(
-                text("TRUNCATE TABLE ingestion_tasks, documents, knowledge_bases")
+                text(
+                    "TRUNCATE TABLE message_citations, messages, conversations, "
+                    "ingestion_tasks, documents, knowledge_bases"
+                )
             )
             await session.commit()
     finally:

@@ -234,12 +234,16 @@ docker compose exec api uv run --no-sync alembic upgrade head
 ALLOWED_DOCUMENT_SUFFIXES = {".md", ".txt"}
 MAX_DOCUMENT_SIZE = 5 * 1024 * 1024
 
+
 class DocumentAcceptedResponse(BaseModel):
     document_id: UUID
     task_id: UUID
     status: Literal["pending"]
 
+
 class DocumentResponse(BaseModel): ...
+
+
 class IngestionTaskResponse(BaseModel): ...
 ```
 
@@ -296,9 +300,12 @@ def validate_upload(filename: str | None, content: bytes) -> str:
 ```python
 class DocumentRepository:
     async def add(self, document: Document) -> None: ...
-    async def get(self, document_id: UUID, knowledge_base_id: UUID | None = None) -> Document | None: ...
+    async def get(
+        self, document_id: UUID, knowledge_base_id: UUID | None = None
+    ) -> Document | None: ...
     async def list_by_knowledge_base(self, knowledge_base_id: UUID) -> list[Document]: ...
     async def delete(self, document: Document) -> None: ...
+
 
 class IngestionTaskRepository:
     async def add(self, task: IngestionTask) -> None: ...
@@ -338,6 +345,7 @@ class ObjectStorage(Protocol):
     async def get(self, key: str) -> bytes: ...
     async def delete(self, key: str) -> None: ...
 
+
 def source_key(knowledge_base_id: UUID, document_id: UUID, filename: str) -> str: ...
 def parsed_key(knowledge_base_id: UUID, document_id: UUID) -> str: ...
 ```
@@ -371,6 +379,7 @@ def parsed_key(knowledge_base_id: UUID, document_id: UUID) -> str: ...
 ```python
 class IngestionQueue(Protocol):
     async def enqueue(self, task_id: UUID, document_id: UUID) -> str: ...
+
 
 class ArqIngestionQueue:
     async def enqueue(self, task_id: UUID, document_id: UUID) -> str:
@@ -527,6 +536,7 @@ f"rag:index:{knowledge_base_id}:{document_id}"
 ```python
 class IngestionService:
     async def run(self, task_id: UUID, document_id: UUID) -> None: ...
+
 
 async def ingest_document(
     ctx: dict[str, object],

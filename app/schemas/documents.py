@@ -8,9 +8,9 @@ from pydantic import BaseModel, ConfigDict
 
 from app.core.exceptions import DocumentTooLargeError, UnsupportedDocumentError
 
-ALLOWED_DOCUMENT_SUFFIXES = {".md", ".txt"}
+ALLOWED_DOCUMENT_SUFFIXES = {".md", ".pdf", ".txt"}
 MAX_DOCUMENT_SIZE = 5 * 1024 * 1024
-SAFE_CONTENT_TYPES = {"text/plain", "text/markdown"}
+SAFE_CONTENT_TYPES = {"application/pdf", "text/plain", "text/markdown"}
 
 
 def normalize_content_type(content_type: str | None) -> str:
@@ -25,7 +25,7 @@ def validate_upload(filename: str | None, content: bytes) -> str:
         raise UnsupportedDocumentError("filename is required")
     suffix = Path(filename).suffix.lower()
     if suffix not in ALLOWED_DOCUMENT_SUFFIXES or not content:
-        raise UnsupportedDocumentError("only non-empty .md and .txt files are supported")
+        raise UnsupportedDocumentError("only non-empty .md, .txt and .pdf files are supported")
     if len(content) > MAX_DOCUMENT_SIZE:
         raise DocumentTooLargeError("document exceeds 5 MiB")
     basename = ntpath.basename(filename)
@@ -47,6 +47,7 @@ class DocumentResponse(BaseModel):
     filename: str
     content_type: str
     size_bytes: int
+    parser_name: str
     source_object_key: str
     parsed_object_key: str | None = None
     status: str

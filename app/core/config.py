@@ -1,13 +1,18 @@
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", env_prefix="RAG_AGENT_", extra="ignore"
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_prefix="RAG_AGENT_",
+        extra="ignore",
+        populate_by_name=True,
     )
 
     app_name: str = "RAG Agent"
@@ -25,6 +30,42 @@ class Settings(BaseSettings):
     minio_access_key: str = "rag-agent"
     minio_secret_key: str = "rag-agent-secret"
     minio_bucket: str = "rag-agent"
+    milvus_uri: str = "http://milvus-standalone:19530"
+    milvus_token: str | None = None
+    milvus_collection: str = "rag_chunks"
+    embedding_base_url: str = Field(
+        default="https://api.openai.com/v1",
+        validation_alias=AliasChoices("RAG_AGENT_EMBEDDING_BASE_URL", "RAG_AGENT_OPENAI_BASE_URL"),
+    )
+    embedding_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("RAG_AGENT_EMBEDDING_API_KEY", "RAG_AGENT_OPENAI_API_KEY"),
+    )
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimension: int = 1536
+    rerank_base_url: str = ""
+    rerank_api_key: str = ""
+    rerank_model: str = ""
+    chat_base_url: str = Field(
+        default="https://api.openai.com/v1",
+        validation_alias=AliasChoices("RAG_AGENT_CHAT_BASE_URL", "RAG_AGENT_OPENAI_BASE_URL"),
+    )
+    chat_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("RAG_AGENT_CHAT_API_KEY", "RAG_AGENT_OPENAI_API_KEY"),
+    )
+    chat_model: str = "gpt-4.1-mini"
+    agent_max_retrievals: int = 3
+    langgraph_strict_msgpack: bool = True
+    mineru_base_url: str = "http://mineru:8000"
+    mineru_api_key: str = ""
+    mineru_model_version: Literal["pipeline", "vlm"] = "vlm"
+    paddlex_base_url: str = "http://paddlex:8080"
+    default_pdf_parser: Literal["mineru", "paddlex"] = "mineru"
+    langfuse_base_url: str = ""
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_environment: str = "default"
 
     @property
     def database_url(self) -> URL:

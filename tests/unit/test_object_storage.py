@@ -9,7 +9,12 @@ from uuid import UUID
 
 import pytest
 
-from app.infrastructure.object_storage import MinioObjectStorage, parsed_key, source_key
+from app.infrastructure.object_storage import (
+    MinioObjectStorage,
+    image_asset_key,
+    parsed_key,
+    source_key,
+)
 
 KB_ID = UUID("11111111-1111-1111-1111-111111111111")
 DOCUMENT_ID = UUID("22222222-2222-2222-2222-222222222222")
@@ -72,6 +77,14 @@ def test_object_keys_are_stable_and_strip_all_path_components() -> None:
         f"{expected_prefix}/source/report.pdf"
     )
     assert parsed_key(KB_ID, DOCUMENT_ID) == f"{expected_prefix}/parsed.json"
+    assert image_asset_key(KB_ID, DOCUMENT_ID, 12, "images/chart.png", "image/png") == (
+        f"{expected_prefix}/images/0012.png"
+    )
+
+
+def test_image_asset_key_rejects_negative_index() -> None:
+    with pytest.raises(ValueError, match="asset_index"):
+        image_asset_key(KB_ID, DOCUMENT_ID, -1, "image.png", "image/png")
 
 
 @pytest.mark.parametrize("filename", ["", ".", "..", "folder/", "folder\\"])

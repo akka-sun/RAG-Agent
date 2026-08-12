@@ -7,6 +7,7 @@ import pytest
 from app.core.exceptions import DocumentCleanupFailedError
 from app.models.document import DocumentStatus
 from app.models.ingestion_task import TaskStage, TaskStatus
+from app.parsers.types import ParsedAsset, ParsedBlock, ParsedDocument
 from app.services import ingestion as ingestion_module
 from app.services.ingestion import IngestionService
 
@@ -128,6 +129,77 @@ class Embedder:
         return [float(len(text))]
 
 
+class AsyncEmbedder:
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        self.events.append("embed_batch")
+        return [[float(len(text))] for text in texts]
+
+
+class ParserRouter:
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+        self.calls: list[tuple[str, bytes, str | None]] = []
+
+    async def parse_document(
+        self,
+        filename: str,
+        content: bytes,
+        parser: str | None,
+    ) -> ParsedDocument:
+        self.events.append("parse")
+        self.calls.append((filename, content, parser))
+        return ParsedDocument(
+            parser="mineru",
+            source_format="pdf",
+            parser_version="mineru-test",
+            blocks=[
+                ParsedBlock(
+                    text="hello pdf",
+                    page_number=2,
+                    heading_path=["Policy"],
+                    block_index=3,
+                )
+            ],
+        )
+
+
+class AssetParserRouter:
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+        self.calls: list[tuple[str, bytes, str | None]] = []
+
+    async def parse_document(
+        self,
+        filename: str,
+        content: bytes,
+        parser: str | None,
+    ) -> ParsedDocument:
+        self.events.append("parse")
+        self.calls.append((filename, content, parser))
+        return ParsedDocument(
+            parser="mineru",
+            source_format="pdf",
+            markdown="Policy diagram ![flow](images/flow.png)",
+            blocks=[
+                ParsedBlock(
+                    text="Policy diagram ![flow](images/flow.png)",
+                    block_index=0,
+                )
+            ],
+            assets=[
+                ParsedAsset(
+                    asset_index=0,
+                    source_path="images/flow.png",
+                    mime_type="image/png",
+                    content=b"\x89PNG\r\n\x1a\n",
+                )
+            ],
+        )
+
+
 def make_entities() -> tuple[uuid.UUID, uuid.UUID, Any, Any]:
     tid, did, kb_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     task: Any = Obj()
@@ -136,6 +208,7 @@ def make_entities() -> tuple[uuid.UUID, uuid.UUID, Any, Any]:
     task.stage, task.progress, task.error = TaskStage.QUEUED, 0, None
     task.completed_at = None
     document.id, document.knowledge_base_id, document.filename = did, kb_id, "a.txt"
+    document.parser_name = "local"
     document.source_object_key, document.parsed_object_key = "kb/source/a.txt", None
     document.status, document.chunk_count, document.error = DocumentStatus.PENDING, 0, None
     return tid, did, task, document
@@ -150,14 +223,14 @@ async def test_run_persists_exact_progress_payload_and_processing_order(
     factory = Factory(task, document)
     storage = Storage(events)
     index = Index(events)
-    original_chunk = ingestion_module.chunk_text
+    original_chunk = ingestion_module.chunk_parsed_document
 
-    def recording_chunk(text: str) -> Any:
+    def recording_chunk(parsed: Any) -> Any:
         events.append("chunk")
-        return original_chunk(text)
+        return original_chunk(parsed)
 
     monkeypatch.setattr(ingestion_module, "IngestionTaskRepository", Repo)
-    monkeypatch.setattr(ingestion_module, "chunk_text", recording_chunk)
+    monkeypatch.setattr(ingestion_module, "chunk_parsed_document", recording_chunk)
     await IngestionService(factory, storage, index, Embedder(events)).run(tid, did)
 
     progress = [(stage, value) for stage, value, _, _ in factory.commits]
@@ -172,12 +245,127 @@ async def test_run_persists_exact_progress_payload_and_processing_order(
     assert events == ["storage.get", "storage.put", "chunk", "embed", "index"]
     parsed_key, payload, content_type = storage.puts[0]
     assert parsed_key == "kb/parsed.json"
-    assert json.loads(payload) == {"text": "hello world"}
+    parsed_payload = json.loads(payload)
+    assert parsed_payload["parser"] == "local"
+    assert parsed_payload["source_format"] == "txt"
+    assert parsed_payload["blocks"][0]["text"] == "hello world"
     assert content_type == "application/json"
     assert index.calls[0][1] == did
-    assert index.calls[0][2][0].vector == [11.0]
+    assert list(index.calls[0][2][0].vector) == [11.0]
     assert all(parsed is None for _, value, _, parsed in factory.commits if value < 100)
     assert document.parsed_object_key == parsed_key
+
+
+@pytest.mark.asyncio
+async def test_run_uses_async_embedding_client_for_batch_vectors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tid, did, task, document = make_entities()
+    events: list[str] = []
+    factory = Factory(task, document)
+    storage = Storage(events)
+    index = Index(events)
+    monkeypatch.setattr(ingestion_module, "IngestionTaskRepository", Repo)
+
+    await IngestionService(factory, storage, index, AsyncEmbedder(events)).run(tid, did)
+
+    assert "embed_batch" in events
+    assert "embed" not in events
+    assert list(index.calls[0][2][0].vector) == [11.0]
+
+
+@pytest.mark.asyncio
+async def test_run_uses_document_parser_selection_and_indexes_structured_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tid, did, task, document = make_entities()
+    document.filename = "policy.pdf"
+    document.parser_name = "mineru"
+    events: list[str] = []
+    factory = Factory(task, document)
+    storage = Storage(events, value=b"%PDF")
+    index = Index(events)
+    parser_router = ParserRouter(events)
+    monkeypatch.setattr(ingestion_module, "IngestionTaskRepository", Repo)
+
+    await IngestionService(
+        factory,
+        storage,
+        index,
+        AsyncEmbedder(events),
+        parser_router=parser_router,
+    ).run(tid, did)
+
+    assert parser_router.calls == [("policy.pdf", b"%PDF", "mineru")]
+    parsed_payload = json.loads(storage.puts[0][1])
+    assert parsed_payload["parser"] == "mineru"
+    assert parsed_payload["blocks"][0]["page_number"] == 2
+    indexed_chunk = index.calls[0][2][0]
+    assert indexed_chunk.page_number == 2
+    assert indexed_chunk.section == "Policy"
+    assert indexed_chunk.metadata["parser"] == "mineru"
+    assert indexed_chunk.metadata["block_index"] == 3
+
+
+@pytest.mark.asyncio
+async def test_pdf_images_are_stored_and_markdown_links_enter_existing_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tid, did, task, document = make_entities()
+    document.filename = "policy.pdf"
+    document.parser_name = "mineru"
+    events: list[str] = []
+    storage = Storage(events, value=b"%PDF")
+    index = Index(events)
+    parser_router = AssetParserRouter(events)
+    monkeypatch.setattr(ingestion_module, "IngestionTaskRepository", Repo)
+
+    await IngestionService(
+        Factory(task, document),
+        storage,
+        index,
+        AsyncEmbedder(events),
+        parser_router=parser_router,
+    ).run(tid, did)
+
+    assert parser_router.calls == [("policy.pdf", b"%PDF", "mineru")]
+    image_put = storage.puts[0]
+    assert image_put[0].endswith(f"/documents/{did}/images/0000.png")
+    assert image_put[1:] == (b"\x89PNG\r\n\x1a\n", "image/png")
+    parsed_put = next(item for item in storage.puts if item[2] == "application/json")
+    parsed_payload = json.loads(parsed_put[1])
+    expected_url = f"/api/v1/knowledge-bases/{document.knowledge_base_id}/documents/{did}/images/0"
+    assert parsed_payload["markdown"] == f"Policy diagram ![flow]({expected_url})"
+    assert parsed_payload["assets"][0]["url"] == expected_url
+    assert "content" not in parsed_payload["assets"][0]
+    assert expected_url in index.calls[0][2][0].text
+
+
+@pytest.mark.asyncio
+async def test_index_failure_deletes_parser_assets_and_parsed_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tid, did, task, document = make_entities()
+    document.filename = "policy.pdf"
+    document.parser_name = "mineru"
+    events: list[str] = []
+    storage = Storage(events, value=b"%PDF")
+    parser_router = AssetParserRouter(events)
+    monkeypatch.setattr(ingestion_module, "IngestionTaskRepository", Repo)
+
+    with pytest.raises(RuntimeError, match="index failed"):
+        await IngestionService(
+            Factory(task, document),
+            storage,
+            Index(events, fail=True),
+            AsyncEmbedder(events),
+            parser_router=parser_router,
+        ).run(tid, did)
+
+    assert storage.deletes == [
+        f"knowledge-bases/{document.knowledge_base_id}/documents/{did}/images/0000.png",
+        "kb/parsed.json",
+    ]
 
 
 @pytest.mark.asyncio

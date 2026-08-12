@@ -6,6 +6,10 @@ class UnsupportedDocumentError(DocumentError):
     code = "unsupported_document"
 
 
+class UnsupportedParserError(UnsupportedDocumentError):
+    code = "unsupported_parser"
+
+
 class DocumentTooLargeError(DocumentError):
     code = "document_too_large"
 

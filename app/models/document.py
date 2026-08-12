@@ -28,6 +28,10 @@ class Document(Base):
             "status IN ('pending', 'processing', 'completed', 'failed')",
             name="status_valid",
         ),
+        CheckConstraint(
+            "parser_name IN ('local', 'mineru', 'paddlex')",
+            name="parser_name_valid",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -40,6 +44,12 @@ class Document(Base):
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     content_type: Mapped[str] = mapped_column(String(255), nullable=False)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    parser_name: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="local",
+        server_default=text("'local'"),
+    )
     source_object_key: Mapped[str] = mapped_column(String(1024), nullable=False)
     parsed_object_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     status: Mapped[str] = mapped_column(
