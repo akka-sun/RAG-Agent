@@ -154,21 +154,23 @@ def get_readiness_service(
             await redis.aclose()
 
     async def minio_probe() -> None:
-        await asyncio.to_thread(minio.bucket_exists, settings.minio_bucket)
+        exists = await asyncio.to_thread(minio.bucket_exists, settings.minio_bucket)
+        if not exists:
+            raise RuntimeError("configured MinIO bucket does not exist")
 
     async def milvus_probe() -> None:
-        milvus = cast(
-            _MilvusProbeClient,
-            await asyncio.to_thread(
-                MilvusClient,
-                uri=settings.milvus_uri,
-                token=settings.milvus_token or "",
-            ),
-        )
-        try:
-            await asyncio.to_thread(milvus.has_collection, settings.milvus_collection)
-        finally:
-            await asyncio.to_thread(milvus.close)
+        def check_collection() -> None:
+            milvus = cast(
+                _MilvusProbeClient,
+                MilvusClient(uri=settings.milvus_uri, token=settings.milvus_token or ""),
+            )
+            try:
+                if not milvus.has_collection(settings.milvus_collection):
+                    raise RuntimeError("configured Milvus collection does not exist")
+            finally:
+                milvus.close()
+
+        await asyncio.to_thread(check_collection)
 
     return ReadinessService(
         postgresql_probe=postgresql_probe,

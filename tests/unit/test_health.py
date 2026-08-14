@@ -1,4 +1,6 @@
+import asyncio
 import os
+import threading
 from collections.abc import Iterator
 from typing import Any, cast
 
@@ -152,7 +154,7 @@ class FakeMilvus:
 
 
 @pytest.mark.asyncio
-async def test_real_readiness_probes_check_without_creating_and_close_resources(
+async def test_false_storage_checks_are_unhealthy_without_creating_resources(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = FakeSession()
@@ -184,7 +186,9 @@ async def test_real_readiness_probes_check_without_creating_and_close_resources(
     result = await service.check()
 
     settings = get_settings()
-    assert result.status == "healthy"
+    assert result.status == "degraded"
+    assert result.services["minio"].error == "MinIO 连接失败"
+    assert result.services["milvus"].error == "Milvus 连接失败"
     assert session.statements == ["SELECT 1"]
     assert minio.calls == [settings.minio_bucket]
     assert len(redis_instances) == 1
@@ -193,6 +197,66 @@ async def test_real_readiness_probes_check_without_creating_and_close_resources(
     assert len(milvus_instances) == 1
     assert milvus_instances[0].calls == [settings.milvus_collection]
     assert milvus_instances[0].closed
+
+
+@pytest.mark.parametrize("blocked_stage", ["constructor", "operation"])
+@pytest.mark.asyncio
+async def test_timed_out_milvus_worker_closes_once_after_late_completion(
+    blocked_stage: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    closed = threading.Event()
+    close_count = 0
+
+    class BlockingMilvus:
+        def has_collection(self, collection: str) -> bool:
+            assert collection == get_settings().milvus_collection
+            if blocked_stage == "operation":
+                started.set()
+                assert release.wait(timeout=2)
+            return True
+
+        def close(self) -> None:
+            nonlocal close_count
+            close_count += 1
+            closed.set()
+
+    class HealthyMinio(FakeMinio):
+        def bucket_exists(self, bucket: str) -> bool:
+            self.calls.append(bucket)
+            return True
+
+    async def fake_create_pool(settings: object) -> FakeRedis:
+        del settings
+        return FakeRedis()
+
+    def fake_milvus_client(*, uri: str, token: str) -> BlockingMilvus:
+        del uri, token
+        if blocked_stage == "constructor":
+            started.set()
+            assert release.wait(timeout=2)
+        return BlockingMilvus()
+
+    monkeypatch.setattr(dependencies, "create_pool", fake_create_pool)
+    monkeypatch.setattr(dependencies, "MilvusClient", fake_milvus_client)
+    service = dependencies.get_readiness_service(
+        cast(Any, FakeSession()),
+        cast(Any, HealthyMinio()),
+    )
+
+    check_task = asyncio.create_task(service.check())
+    assert await asyncio.wait_for(asyncio.to_thread(started.wait, 0.2), timeout=0.3)
+    try:
+        result = await asyncio.wait_for(check_task, timeout=1.2)
+        assert result.services["milvus"].error == "Milvus 连接失败"
+        assert close_count == 0
+    finally:
+        release.set()
+
+    assert await asyncio.wait_for(asyncio.to_thread(closed.wait, 0.2), timeout=0.3)
+    assert close_count == 1
 
 
 @pytest.mark.asyncio

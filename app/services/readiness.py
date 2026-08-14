@@ -8,6 +8,8 @@ from app.schemas.health import ReadinessResponse, ServiceName, ServiceReadiness
 
 Probe = Callable[[], Awaitable[None]]
 
+_BACKGROUND_PROBES: set[asyncio.Future[None]] = set()
+
 _ERROR_MESSAGES: dict[ServiceName, str] = {
     "postgresql": "PostgreSQL 连接失败",
     "redis": "Redis 连接失败",
@@ -51,8 +53,14 @@ class ReadinessService:
 
     async def _check_probe(self, service_name: ServiceName, probe: Probe) -> ServiceReadiness:
         started_at = time.perf_counter()
+        future = asyncio.ensure_future(probe())
+        _BACKGROUND_PROBES.add(future)
+        future.add_done_callback(_consume_background_probe)
         try:
-            await asyncio.wait_for(probe(), timeout=self._timeout_seconds)
+            done, _ = await asyncio.wait({future}, timeout=self._timeout_seconds)
+            if future not in done:
+                raise TimeoutError
+            future.result()
         except Exception:
             return ServiceReadiness(
                 status="unhealthy",
@@ -67,3 +75,9 @@ class ReadinessService:
     @staticmethod
     def _elapsed_ms(started_at: float) -> float:
         return round((time.perf_counter() - started_at) * 1000, 2)
+
+
+def _consume_background_probe(future: asyncio.Future[None]) -> None:
+    _BACKGROUND_PROBES.discard(future)
+    if not future.cancelled():
+        future.exception()

@@ -91,16 +91,17 @@ async def test_one_failed_probe_does_not_suppress_peer_results() -> None:
 
 @pytest.mark.asyncio
 async def test_probe_timeout_is_bounded_and_reported_as_unhealthy() -> None:
-    cancelled = asyncio.Event()
+    release = asyncio.Event()
+    finished = asyncio.Event()
 
     async def success() -> None:
         return None
 
     async def blocked_milvus() -> None:
         try:
-            await asyncio.Event().wait()
+            await release.wait()
         finally:
-            cancelled.set()
+            finished.set()
 
     service = make_service(
         postgresql=success,
@@ -112,11 +113,57 @@ async def test_probe_timeout_is_bounded_and_reported_as_unhealthy() -> None:
 
     result = await asyncio.wait_for(service.check(), timeout=0.1)
 
-    assert cancelled.is_set()
-    assert result.status == "degraded"
-    assert result.services["milvus"].status == "unhealthy"
-    assert result.services["milvus"].error == "Milvus 连接失败"
-    assert result.services["postgresql"].status == "healthy"
+    try:
+        assert not finished.is_set()
+        assert result.status == "degraded"
+        assert result.services["milvus"].status == "unhealthy"
+        assert result.services["milvus"].error == "Milvus 连接失败"
+        assert result.services["postgresql"].status == "healthy"
+    finally:
+        release.set()
+        await asyncio.wait_for(finished.wait(), timeout=0.1)
+
+
+@pytest.mark.asyncio
+async def test_timeout_returns_without_waiting_for_stuck_probe_cleanup() -> None:
+    cleanup_started = asyncio.Event()
+    cleanup_release = asyncio.Event()
+    cleanup_finished = asyncio.Event()
+
+    async def success() -> None:
+        return None
+
+    async def failing_probe_with_stuck_cleanup() -> None:
+        try:
+            raise RuntimeError("probe failed")
+        finally:
+            cleanup_started.set()
+            while not cleanup_release.is_set():
+                try:
+                    await cleanup_release.wait()
+                except asyncio.CancelledError:
+                    continue
+            cleanup_finished.set()
+
+    service = make_service(
+        postgresql=success,
+        redis=failing_probe_with_stuck_cleanup,
+        minio=success,
+        milvus=success,
+        timeout_seconds=0.01,
+    )
+    check_task = asyncio.create_task(service.check())
+    await asyncio.wait_for(cleanup_started.wait(), timeout=0.05)
+
+    try:
+        result = await asyncio.wait_for(asyncio.shield(check_task), timeout=0.05)
+        assert result.status == "degraded"
+        assert result.services["redis"].error == "Redis 连接失败"
+    finally:
+        cleanup_release.set()
+        await asyncio.wait_for(cleanup_finished.wait(), timeout=0.1)
+        if not check_task.done():
+            await asyncio.wait_for(check_task, timeout=0.1)
 
 
 @pytest.mark.asyncio
