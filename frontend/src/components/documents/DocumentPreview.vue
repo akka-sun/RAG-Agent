@@ -18,6 +18,10 @@ const text = ref('')
 const previewUrl = ref<string | null>(null)
 const assetIndexes = ref<number[]>([])
 const assetUrls = ref<Record<number, string>>({})
+let generation = 0
+let previewController: AbortController | null = null
+const assetControllers = new Map<number, AbortController>()
+const downloadControllers = new Set<AbortController>()
 
 function messageFor(reason: unknown): string {
   return reason instanceof Error ? reason.message : '预览加载失败，请稍后重试。'
@@ -28,6 +32,13 @@ function revoke(url: string | null): void {
 }
 
 function resetPreview(): void {
+  generation += 1
+  previewController?.abort()
+  previewController = null
+  for (const controller of assetControllers.values()) controller.abort()
+  assetControllers.clear()
+  for (const controller of downloadControllers) controller.abort()
+  downloadControllers.clear()
   revoke(previewUrl.value)
   previewUrl.value = null
   for (const url of Object.values(assetUrls.value)) revoke(url)
@@ -36,11 +47,7 @@ function resetPreview(): void {
   text.value = ''
   assetIndexes.value = []
   error.value = ''
-}
-
-function setPreviewUrl(blob: Blob): void {
-  revoke(previewUrl.value)
-  previewUrl.value = URL.createObjectURL(blob)
+  loading.value = false
 }
 
 function readBlobText(blob: Blob): Promise<string> {
@@ -55,22 +62,36 @@ function readBlobText(blob: Blob): Promise<string> {
 
 async function previewSource(): Promise<void> {
   resetPreview()
+  const requestGeneration = generation
+  const controller = new AbortController()
+  previewController = controller
   loading.value = true
   try {
-    const response = await documentsApi.source(props.knowledgeBaseId, props.document.id)
+    const response = await documentsApi.source(props.knowledgeBaseId, props.document.id, controller.signal)
     const isPdf = response.contentType === 'application/pdf'
       || props.document.filename.toLowerCase().endsWith('.pdf')
     if (isPdf) {
-      setPreviewUrl(response.blob)
+      const url = URL.createObjectURL(response.blob)
+      if (requestGeneration !== generation || controller.signal.aborted) {
+        URL.revokeObjectURL(url)
+        return
+      }
+      revoke(previewUrl.value)
+      previewUrl.value = url
       mode.value = 'pdf'
     } else {
-      text.value = await readBlobText(response.blob)
+      const sourceText = await readBlobText(response.blob)
+      if (requestGeneration !== generation || controller.signal.aborted) return
+      text.value = sourceText
       mode.value = 'text'
     }
   } catch (reason) {
-    error.value = messageFor(reason)
+    if (requestGeneration === generation && !controller.signal.aborted) error.value = messageFor(reason)
   } finally {
-    loading.value = false
+    if (requestGeneration === generation && previewController === controller) {
+      previewController = null
+      loading.value = false
+    }
   }
 }
 
@@ -102,41 +123,71 @@ function parsedAssetIndexes(payload: unknown): number[] {
 
 async function previewParsed(): Promise<void> {
   resetPreview()
+  const requestGeneration = generation
+  const controller = new AbortController()
+  previewController = controller
   loading.value = true
   try {
-    const response = await documentsApi.parsed(props.knowledgeBaseId, props.document.id)
+    const response = await documentsApi.parsed(props.knowledgeBaseId, props.document.id, controller.signal)
     const payload: unknown = JSON.parse(await readBlobText(response.blob))
+    if (requestGeneration !== generation || controller.signal.aborted) return
     text.value = parsedText(payload)
     assetIndexes.value = parsedAssetIndexes(payload)
     mode.value = 'text'
   } catch (reason) {
-    error.value = messageFor(reason)
+    if (requestGeneration === generation && !controller.signal.aborted) error.value = messageFor(reason)
   } finally {
-    loading.value = false
+    if (requestGeneration === generation && previewController === controller) {
+      previewController = null
+      loading.value = false
+    }
   }
 }
 
 async function previewAsset(assetIndex: number): Promise<void> {
-  if (!assetIndexes.value.includes(assetIndex) || assetUrls.value[assetIndex]) return
+  if (!assetIndexes.value.includes(assetIndex) || assetUrls.value[assetIndex] || assetControllers.has(assetIndex)) return
+  const requestGeneration = generation
+  const controller = new AbortController()
+  assetControllers.set(assetIndex, controller)
   try {
-    const response = await documentsApi.image(props.knowledgeBaseId, props.document.id, assetIndex)
-    assetUrls.value = { ...assetUrls.value, [assetIndex]: URL.createObjectURL(response.blob) }
+    const response = await documentsApi.image(props.knowledgeBaseId, props.document.id, assetIndex, controller.signal)
+    const url = URL.createObjectURL(response.blob)
+    if (requestGeneration !== generation || controller.signal.aborted || assetControllers.get(assetIndex) !== controller) {
+      URL.revokeObjectURL(url)
+      return
+    }
+    if (assetUrls.value[assetIndex]) {
+      URL.revokeObjectURL(url)
+      return
+    }
+    assetUrls.value = { ...assetUrls.value, [assetIndex]: url }
   } catch (reason) {
-    error.value = messageFor(reason)
+    if (requestGeneration === generation && !controller.signal.aborted) error.value = messageFor(reason)
+  } finally {
+    if (assetControllers.get(assetIndex) === controller) assetControllers.delete(assetIndex)
   }
 }
 
-async function download(fetchBlob: () => Promise<BlobResponse>, fallbackName: string): Promise<void> {
+async function download(kind: 'source' | 'parsed', fallbackName: string): Promise<void> {
+  const requestGeneration = generation
+  const controller = new AbortController()
+  downloadControllers.add(controller)
   try {
-    const response = await fetchBlob()
+    const response: BlobResponse = await documentsApi[kind](props.knowledgeBaseId, props.document.id, controller.signal)
     const url = URL.createObjectURL(response.blob)
+    if (requestGeneration !== generation || controller.signal.aborted) {
+      URL.revokeObjectURL(url)
+      return
+    }
     const anchor = window.document.createElement('a')
     anchor.href = url
     anchor.download = response.filename ?? fallbackName
     anchor.click()
     URL.revokeObjectURL(url)
   } catch (reason) {
-    error.value = messageFor(reason)
+    if (requestGeneration === generation && !controller.signal.aborted) error.value = messageFor(reason)
+  } finally {
+    downloadControllers.delete(controller)
   }
 }
 
@@ -154,8 +205,8 @@ onBeforeUnmount(resetPreview)
       <div class="document-preview__actions">
         <button name="preview-source" type="button" class="button button--secondary" @click="previewSource">预览原文</button>
         <button name="preview-parsed" type="button" class="button button--secondary" :disabled="!document.parsed_object_key" @click="previewParsed">预览解析结果</button>
-        <button type="button" class="button button--secondary" @click="download(() => documentsApi.source(knowledgeBaseId, document.id), document.filename)">下载原文</button>
-        <button type="button" class="button button--secondary" :disabled="!document.parsed_object_key" @click="download(() => documentsApi.parsed(knowledgeBaseId, document.id), `${document.filename}.json`)">下载解析结果</button>
+        <button type="button" class="button button--secondary" @click="download('source', document.filename)">下载原文</button>
+        <button type="button" class="button button--secondary" :disabled="!document.parsed_object_key" @click="download('parsed', `${document.filename}.json`)">下载解析结果</button>
       </div>
     </div>
 
@@ -169,7 +220,7 @@ onBeforeUnmount(resetPreview)
     <div v-if="assetIndexes.length" class="document-preview__assets">
       <h3>解析图片</h3>
       <div v-for="assetIndex in assetIndexes" :key="assetIndex" class="document-preview__asset">
-        <button type="button" class="button button--secondary" @click="previewAsset(assetIndex)">图片 {{ assetIndex }}</button>
+        <button name="preview-asset" type="button" class="button button--secondary" @click="previewAsset(assetIndex)">图片 {{ assetIndex }}</button>
         <img v-if="assetUrls[assetIndex]" :src="assetUrls[assetIndex]" :alt="`解析图片 ${assetIndex}`">
       </div>
     </div>

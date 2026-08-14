@@ -19,13 +19,19 @@ const trackedTasks = computed(() => Object.values(store.tasks)
   .filter((task) => task.knowledgeBaseId === knowledgeBaseId.value))
 const selectedDocument = computed(() => documents.value
   .find((document) => document.id === selectedDocumentId.value) ?? null)
+let pageActive = true
 
 async function load(): Promise<void> {
-  if (!knowledgeBaseId.value) return
+  const requestedKnowledgeBaseId = knowledgeBaseId.value
+  if (!requestedKnowledgeBaseId) return
   try {
-    await store.load(knowledgeBaseId.value)
+    await store.load(requestedKnowledgeBaseId)
   } catch {
     // The store exposes the backend error through the page alert.
+  } finally {
+    if (pageActive && knowledgeBaseId.value === requestedKnowledgeBaseId) {
+      store.resumePolling(requestedKnowledgeBaseId)
+    }
   }
 }
 
@@ -64,7 +70,10 @@ watch(knowledgeBaseId, async (next, previous) => {
   selectedDocumentId.value = null
   await load()
 })
-onBeforeUnmount(store.stopAllPolling)
+onBeforeUnmount(() => {
+  pageActive = false
+  store.stopAllPolling()
+})
 </script>
 
 <template>

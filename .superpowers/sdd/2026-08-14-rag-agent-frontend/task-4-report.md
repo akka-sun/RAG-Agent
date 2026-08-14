@@ -51,3 +51,39 @@
 ## Concerns
 
 - 未做连接真实后端与对象存储的手工浏览器 smoke test；API 边界、生命周期和构建由自动化测试覆盖。
+
+## Fix round 1（独立审查修复）
+
+### 状态
+
+已修复 `task-4-review.md` 的全部 finding：
+
+- 预览和图片请求增加 generation token 与 AbortController；文档切换、竞争操作和卸载均会失效旧请求，迟到 Blob URL 会立即撤销。
+- 同一解析图片的 pending 请求按 `asset_index` 去重，避免重复请求和 URL 覆盖泄漏。
+- store 新增 `resumePolling(knowledgeBaseId)`，页面 mount、返回与知识库路由变化后恢复当前会话内 eligible task；terminal 与 pollingError task 保持停止。
+- 删除请求成功前不再停止轮询；拒绝删除保留任务和轮询并暴露后端错误，成功删除才清理对应 tracked task。
+- pending/processing 文档的删除按钮禁用。
+- fake-timer 测试明确验证 1s、2s、3s、4s、5s，后续继续保持 5s cap。
+
+### 红绿证据
+
+- RED：新增 review covering tests 后，focused run 为 25 tests 中 9 个失败；失败分别命中 stale preview、图片重复请求、删除轮询中断、tracked task 未清理、缺失 resume 操作、页面返回/KB 切换不恢复及活跃删除未禁用。
+- GREEN：最小实现及测试隔离修正后，focused run 为 2 files、25 tests 全部通过。
+
+新增/调整测试位于：
+
+- `frontend/src/components/documents/DocumentUploader.spec.ts`
+- `frontend/src/stores/documents.spec.ts`
+
+覆盖 delayed promise 的文档切换、卸载前未完成请求、竞争 preview action、重复图片点击、exact URL revoke；覆盖 navigate away/back、知识库参数变化、eligible-only resume、rejected/successful delete 与完整轮询节奏。
+
+### Fix round 1 验证命令与结果
+
+- `pnpm test:run src/stores/documents.spec.ts src/components/documents/DocumentUploader.spec.ts`：2 files、25 tests 通过。
+- `pnpm test:run`：6 files、44 tests 通过。
+- `pnpm typecheck`：通过，退出码 0。
+- `pnpm build`：通过，81 modules transformed，退出码 0。
+
+### Fix round 1 concerns
+
+- 仍未连接真实后端/对象存储执行浏览器 smoke test；review 指出的并发与生命周期路径已由可控 delayed promise 和 fake timer 自动化覆盖。

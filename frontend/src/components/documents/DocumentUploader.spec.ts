@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import { reactive } from 'vue'
 import DocumentUploader, { validateUpload } from './DocumentUploader.vue'
 import DocumentPreview from './DocumentPreview.vue'
 import DocumentTable from './DocumentTable.vue'
@@ -22,9 +23,14 @@ const api = vi.hoisted(() => ({
 }))
 
 vi.mock('@/api/resources', () => ({ documentsApi: api }))
-vi.mock('vue-router', () => ({
-  useRoute: () => ({ params: { knowledgeBaseId: 'knowledge-base-id' } }),
-}))
+const router = vi.hoisted(() => ({ route: null as unknown as { params: { knowledgeBaseId: string } } }))
+vi.mock('vue-router', () => ({ useRoute: () => router.route }))
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((fulfill) => { resolve = fulfill })
+  return { promise, resolve }
+}
 
 const documentRecord: DocumentRecord = {
   id: 'document-id',
@@ -91,7 +97,8 @@ describe('document preview resource safety', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
-    createObjectURL.mockReturnValueOnce('blob:preview').mockReturnValue('blob:asset')
+    createObjectURL.mockReset().mockReturnValueOnce('blob:preview').mockReturnValue('blob:asset')
+    revokeObjectURL.mockReset()
     const NativeURL = URL
     vi.stubGlobal('URL', class extends NativeURL {
       static createObjectURL = createObjectURL
@@ -148,6 +155,79 @@ describe('document preview resource safety', () => {
     expect(wrapper.text()).not.toContain('图片 0')
     expect(api.image).not.toHaveBeenCalled()
   })
+
+  it('invalidates a late source preview when the document changes and revokes its URL', async () => {
+    const response = deferred<Awaited<ReturnType<typeof api.source>>>()
+    api.source.mockReturnValue(response.promise)
+    createObjectURL.mockReset().mockReturnValue('blob:late-source')
+    const wrapper = mount(DocumentPreview, {
+      props: { knowledgeBaseId: 'knowledge-base-id', document: documentRecord },
+    })
+    await wrapper.get('button[name="preview-source"]').trigger('click')
+
+    await wrapper.setProps({ document: { ...documentRecord, id: 'new-document-id', filename: 'new.pdf' } })
+    response.resolve({
+      blob: new Blob(['pdf'], { type: 'application/pdf' }), contentType: 'application/pdf',
+      contentDisposition: null, filename: 'report.pdf', status: 200,
+    })
+    await flushPromises()
+
+    expect(wrapper.find('object').exists()).toBe(false)
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1)
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:late-source')
+  })
+
+  it('keeps the newer parsed preview when an older source request finishes later', async () => {
+    const sourceResponse = deferred<Awaited<ReturnType<typeof api.source>>>()
+    api.source.mockReturnValue(sourceResponse.promise)
+    api.parsed.mockResolvedValue({
+      blob: new Blob([JSON.stringify({ markdown: 'new parsed text', assets: [] })], { type: 'application/json' }),
+      contentType: 'application/json', contentDisposition: null, filename: null, status: 200,
+    })
+    const wrapper = mount(DocumentPreview, {
+      props: { knowledgeBaseId: 'knowledge-base-id', document: documentRecord },
+    })
+    await wrapper.get('button[name="preview-source"]').trigger('click')
+    await wrapper.get('button[name="preview-parsed"]').trigger('click')
+    await vi.waitFor(() => expect(wrapper.find('pre').exists()).toBe(true))
+
+    sourceResponse.resolve({
+      blob: new Blob(['old source'], { type: 'text/plain' }), contentType: 'text/plain',
+      contentDisposition: null, filename: 'old.txt', status: 200,
+    })
+    await flushPromises()
+
+    expect(wrapper.get('pre').text()).toBe('new parsed text')
+  })
+
+  it('deduplicates pending image requests and revokes a late URL after unmount', async () => {
+    api.parsed.mockResolvedValue({
+      blob: new Blob([JSON.stringify({ markdown: 'parsed', assets: [{ asset_index: 3 }] })], { type: 'application/json' }),
+      contentType: 'application/json', contentDisposition: null, filename: null, status: 200,
+    })
+    const imageResponse = deferred<Awaited<ReturnType<typeof api.image>>>()
+    api.image.mockReturnValue(imageResponse.promise)
+    createObjectURL.mockReset().mockReturnValue('blob:late-image')
+    const wrapper = mount(DocumentPreview, {
+      props: { knowledgeBaseId: 'knowledge-base-id', document: documentRecord },
+    })
+    await wrapper.get('button[name="preview-parsed"]').trigger('click')
+    await vi.waitFor(() => expect(wrapper.text()).toContain('图片 3'))
+    const imageButton = wrapper.get('button[name="preview-asset"]')
+    await imageButton.trigger('click')
+    await imageButton.trigger('click')
+    wrapper.unmount()
+
+    imageResponse.resolve({
+      blob: new Blob(['image'], { type: 'image/png' }), contentType: 'image/png',
+      contentDisposition: null, filename: null, status: 200,
+    })
+    await flushPromises()
+
+    expect(api.image).toHaveBeenCalledTimes(1)
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1)
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:late-image')
+  })
 })
 
 describe('document management presentation', () => {
@@ -176,6 +256,14 @@ describe('document management presentation', () => {
 
     await wrapper.get('button[name="retry-document"]').trigger('click')
     expect(wrapper.emitted('retry')).toEqual([['document-id']])
+  })
+
+  it('disables deletion while a document is pending or processing', () => {
+    const wrapper = mount(DocumentTable, {
+      props: { documents: [{ ...documentRecord, status: 'processing' }] },
+    })
+
+    expect(wrapper.get<HTMLButtonElement>('button[name="remove-document"]').element.disabled).toBe(true)
   })
 
   it('shows only known task progress plus an actionable polling error', () => {
@@ -211,7 +299,16 @@ describe('document management presentation', () => {
 })
 
 describe('knowledge-base document workspace', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('loads the routed knowledge base and stops polling when the page unmounts', async () => {
+    router.route = reactive({ params: { knowledgeBaseId: 'knowledge-base-id' } })
     api.list.mockResolvedValue([documentRecord])
     const pinia = createPinia()
     setActivePinia(pinia)
@@ -227,5 +324,65 @@ describe('knowledge-base document workspace', () => {
 
     wrapper.unmount()
     expect(stop).toHaveBeenCalledTimes(1)
+  })
+
+  it('resumes known work after navigating away and back', async () => {
+    vi.useFakeTimers()
+    router.route = reactive({ params: { knowledgeBaseId: 'knowledge-base-id' } })
+    api.list.mockResolvedValue([documentRecord])
+    api.upload.mockResolvedValue({ document_id: 'document-id', task_id: 'task-id', status: 'pending' })
+    api.task.mockResolvedValue({
+      id: 'task-id', document_id: 'document-id', arq_job_id: 'job-id', status: 'processing',
+      stage: 'parsing', progress: 20, error: null, created_at: '2026-08-14T00:00:00Z',
+      started_at: '2026-08-14T00:00:01Z', completed_at: null,
+    })
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useDocumentStore()
+    await store.upload('knowledge-base-id', new File(['notes'], 'notes.txt'))
+    store.stopAllPolling()
+
+    const first = mount(KnowledgeBaseDetailPage, { global: { plugins: [pinia] } })
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(1_000)
+    first.unmount()
+    const callsBeforeReturn = api.task.mock.calls.length
+
+    const returned = mount(KnowledgeBaseDetailPage, { global: { plugins: [pinia] } })
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect(api.task).toHaveBeenCalledTimes(callsBeforeReturn + 1)
+    returned.unmount()
+  })
+
+  it('stops the previous knowledge base and resumes the new route tasks', async () => {
+    vi.useFakeTimers()
+    router.route = reactive({ params: { knowledgeBaseId: 'kb-a' } })
+    api.list.mockResolvedValue([])
+    api.task.mockResolvedValue({
+      id: 'task-b', document_id: 'doc-b', arq_job_id: 'job-b', status: 'processing',
+      stage: 'parsing', progress: 20, error: null, created_at: '2026-08-14T00:00:00Z',
+      started_at: '2026-08-14T00:00:01Z', completed_at: null,
+    })
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useDocumentStore()
+    store.tasks['task-a'] = {
+      taskId: 'task-a', documentId: 'doc-a', knowledgeBaseId: 'kb-a', task: null, pollingError: null,
+    }
+    store.tasks['task-b'] = {
+      taskId: 'task-b', documentId: 'doc-b', knowledgeBaseId: 'kb-b', task: null, pollingError: null,
+    }
+    const wrapper = mount(KnowledgeBaseDetailPage, { global: { plugins: [pinia] } })
+    await flushPromises()
+
+    router.route.params.knowledgeBaseId = 'kb-b'
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect(api.task).toHaveBeenCalledTimes(1)
+    expect(api.task).toHaveBeenCalledWith('task-b', expect.any(AbortSignal))
+    wrapper.unmount()
   })
 })

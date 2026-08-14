@@ -60,7 +60,14 @@ function confirmRemove(): void {
             <div class="document-table__actions">
               <button type="button" class="button button--secondary" @click="$emit('preview', document.id)">预览与下载</button>
               <button v-if="document.status === 'failed'" name="retry-document" type="button" class="button button--secondary" @click="$emit('retry', document.id)">重试</button>
-              <button name="remove-document" type="button" class="button button--danger" @click="pendingDelete = document">删除</button>
+              <button
+                name="remove-document"
+                type="button"
+                class="button button--danger"
+                :disabled="document.status === 'pending' || document.status === 'processing'"
+                :title="document.status === 'pending' || document.status === 'processing' ? '摄取完成后才能删除' : undefined"
+                @click="pendingDelete = document"
+              >删除</button>
             </div>
           </td>
         </tr>

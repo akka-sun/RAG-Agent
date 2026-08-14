@@ -115,6 +115,17 @@ export const useDocumentStore = defineStore('documents', () => {
     schedule(taskId)
   }
 
+  function resumePolling(knowledgeBaseId: string): void {
+    for (const tracked of Object.values(tasks.value)) {
+      if (tracked.knowledgeBaseId === knowledgeBaseId
+        && !tracked.pollingError
+        && tracked.task?.status !== 'completed'
+        && tracked.task?.status !== 'failed') {
+        pollTask(tracked.taskId)
+      }
+    }
+  }
+
   function track(
     knowledgeBaseId: string,
     documentId: string,
@@ -163,11 +174,13 @@ export const useDocumentStore = defineStore('documents', () => {
 
   async function remove(knowledgeBaseId: string, documentId: string): Promise<void> {
     error.value = null
-    for (const tracked of Object.values(tasks.value)) {
-      if (tracked.documentId === documentId) stopPolling(tracked.taskId)
-    }
     try {
       await documentsApi.delete(knowledgeBaseId, documentId)
+      for (const tracked of Object.values(tasks.value)) {
+        if (tracked.documentId !== documentId) continue
+        stopPolling(tracked.taskId)
+        delete tasks.value[tracked.taskId]
+      }
       documentsByKnowledgeBase.value[knowledgeBaseId] = (documentsByKnowledgeBase.value[knowledgeBaseId] ?? [])
         .filter((document) => document.id !== documentId)
     } catch (reason) {
@@ -190,6 +203,7 @@ export const useDocumentStore = defineStore('documents', () => {
     load,
     upload,
     pollTask,
+    resumePolling,
     retry,
     remove,
     stopAllPolling,

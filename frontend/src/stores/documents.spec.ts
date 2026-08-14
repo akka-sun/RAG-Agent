@@ -63,7 +63,7 @@ describe('document store polling', () => {
     api.list.mockResolvedValue([documentRecord])
   })
 
-  it('keeps the accepted document and task IDs and polls after 1s, 2s, then 3s', async () => {
+  it('keeps accepted IDs and polls after 1s, 2s, 3s, 4s, then caps at 5s', async () => {
     api.task.mockResolvedValue(task('processing', 20))
     const store = useDocumentStore()
 
@@ -86,6 +86,18 @@ describe('document store polling', () => {
     expect(api.task).toHaveBeenCalledTimes(2)
     await vi.advanceTimersByTimeAsync(1)
     expect(api.task).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(3_999)
+    expect(api.task).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(api.task).toHaveBeenCalledTimes(4)
+    await vi.advanceTimersByTimeAsync(4_999)
+    expect(api.task).toHaveBeenCalledTimes(4)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(api.task).toHaveBeenCalledTimes(5)
+    await vi.advanceTimersByTimeAsync(4_999)
+    expect(api.task).toHaveBeenCalledTimes(5)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(api.task).toHaveBeenCalledTimes(6)
 
     store.stopAllPolling()
   })
@@ -171,5 +183,60 @@ describe('document store polling', () => {
 
     expect(api.delete).toHaveBeenCalledWith('knowledge-base-id', 'document-id')
     expect(store.documentsByKnowledgeBase['knowledge-base-id']).toEqual([])
+  })
+
+  it('keeps polling and exposes the backend error when deletion is rejected', async () => {
+    api.delete.mockRejectedValue(new Error('摄取中的文档不能删除'))
+    api.task.mockResolvedValue(task('processing', 30))
+    const store = useDocumentStore()
+    await store.upload('knowledge-base-id', new File(['notes'], 'notes.txt'))
+
+    await expect(store.remove('knowledge-base-id', 'document-id')).rejects.toThrow('摄取中的文档不能删除')
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect(store.error).toBe('摄取中的文档不能删除')
+    expect(api.task).toHaveBeenCalledTimes(1)
+    expect(store.tasks['task-id']).toBeDefined()
+    store.stopAllPolling()
+  })
+
+  it('removes tracked tasks only after deletion succeeds', async () => {
+    api.delete.mockResolvedValue(undefined)
+    const store = useDocumentStore()
+    await store.upload('knowledge-base-id', new File(['notes'], 'notes.txt'))
+
+    await store.remove('knowledge-base-id', 'document-id')
+    await vi.advanceTimersByTimeAsync(10_000)
+
+    expect(store.tasks['task-id']).toBeUndefined()
+    expect(api.task).not.toHaveBeenCalled()
+  })
+
+  it('resumes only eligible known tasks for one knowledge base', async () => {
+    const store = useDocumentStore()
+    store.tasks['pending-task'] = {
+      taskId: 'pending-task', documentId: 'pending-document', knowledgeBaseId: 'knowledge-base-id',
+      task: { ...task('pending'), id: 'pending-task', document_id: 'pending-document' }, pollingError: null,
+    }
+    store.tasks['terminal-task'] = {
+      taskId: 'terminal-task', documentId: 'terminal-document', knowledgeBaseId: 'knowledge-base-id',
+      task: { ...task('completed', 100), id: 'terminal-task', document_id: 'terminal-document' }, pollingError: null,
+    }
+    store.tasks['errored-task'] = {
+      taskId: 'errored-task', documentId: 'errored-document', knowledgeBaseId: 'knowledge-base-id',
+      task: { ...task('processing'), id: 'errored-task', document_id: 'errored-document' }, pollingError: '刷新页面重试',
+    }
+    store.tasks['other-task'] = {
+      taskId: 'other-task', documentId: 'other-document', knowledgeBaseId: 'other-kb',
+      task: { ...task('processing'), id: 'other-task', document_id: 'other-document' }, pollingError: null,
+    }
+    api.task.mockResolvedValue(task('processing', 50))
+
+    store.resumePolling('knowledge-base-id')
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect(api.task).toHaveBeenCalledTimes(1)
+    expect(api.task).toHaveBeenCalledWith('pending-task', expect.any(AbortSignal))
+    store.stopAllPolling()
   })
 })
