@@ -8,7 +8,7 @@ import StatusPage from '@/pages/StatusPage.vue'
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', name: 'chat', component: ChatPage },
+    { path: '/', alias: '/chat', name: 'chat', component: ChatPage },
     { path: '/knowledge-bases', name: 'knowledge-bases', component: KnowledgeBasesPage },
     {
       path: '/knowledge-bases/:knowledgeBaseId',

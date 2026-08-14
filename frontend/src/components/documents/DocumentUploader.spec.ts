@@ -242,7 +242,7 @@ describe('document management presentation', () => {
     expect(wrapper.text()).toContain('report.pdf')
     expect(wrapper.text()).toContain('mineru')
     expect(wrapper.text()).toContain('100 B')
-    expect(wrapper.text()).toContain('failed')
+    expect(wrapper.text()).toContain('处理失败')
     expect(wrapper.text()).toContain('3')
     expect(wrapper.text()).toContain('解析器不可用')
     expect(wrapper.text()).not.toContain('source-key')
@@ -291,7 +291,7 @@ describe('document management presentation', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('processing')
+    expect(wrapper.text()).toContain('处理中')
     expect(wrapper.text()).toContain('parsing')
     expect(wrapper.text()).toContain('42%')
     expect(wrapper.text()).toContain('任务状态获取失败，请检查网络后刷新页面重试。')

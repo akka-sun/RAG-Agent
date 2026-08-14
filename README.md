@@ -4,10 +4,10 @@
 
 前端需要 Docker Desktop（或兼容的 Docker Engine）、Docker Compose v2，以及本地开发所需的 Node.js 24 LTS 与 pnpm。首次运行可从示例配置创建本地 `.env`；不要提交真实凭据。
 
-使用 Docker Compose 构建并启动前端及其依赖：
+在仓库根目录使用一条命令构建并启动完整服务栈：
 
 ```powershell
-docker compose up -d --build frontend
+docker compose up -d --build
 ```
 
 默认通过 `http://127.0.0.1:5173` 访问前端。浏览器只请求同源 `/api/v1`，由前端 Nginx 代理到 Compose 内的 `api:8000`；SSE 响应不会被代理缓冲。刷新 `/chat` 等前端深链时，Nginx 会回退到 `index.html`。
@@ -26,7 +26,11 @@ pnpm dev
 pnpm test:run
 pnpm typecheck
 pnpm build
+pnpm test:e2e:install  # 首次运行仅需安装 Chromium
+pnpm test:e2e
 ```
+
+Playwright E2E 使用同源 `/api/v1` 契约 fixture，不调用真实模型服务；默认覆盖 1440×900、768×900 和 390×844 三种 Chromium 视口。失败时的截图与 trace 写入已忽略的 `frontend/test-results/`，HTML 报告写入已忽略的 `frontend/playwright-report/`。
 
 PDF 图片处理链路见 [docs/pdf-image-processing.md](docs/pdf-image-processing.md)。
 

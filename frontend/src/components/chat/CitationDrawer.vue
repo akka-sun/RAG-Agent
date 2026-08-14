@@ -57,7 +57,8 @@ function keydown(event: KeyboardEvent): void {
       <header class="citation-drawer__header">
         <div>
           <p class="citation-drawer__label">引用 {{ citation.source_label }}</p>
-          <h2 id="citation-drawer-title">{{ filename }}</h2>
+          <h2 id="citation-drawer-title">引用来源</h2>
+          <p class="citation-drawer__filename">{{ filename }}</p>
         </div>
         <button ref="closeButton" type="button" class="citation-drawer__close" aria-label="关闭引用详情" @click="close">×</button>
       </header>
@@ -111,7 +112,8 @@ function keydown(event: KeyboardEvent): void {
 }
 
 .citation-drawer__header h2,
-.citation-drawer__label {
+.citation-drawer__label,
+.citation-drawer__filename {
   margin: 0;
 }
 
@@ -120,6 +122,11 @@ function keydown(event: KeyboardEvent): void {
   color: var(--color-text-muted);
   font-size: 0.8125rem;
   font-weight: 700;
+}
+
+.citation-drawer__filename {
+  margin-top: 0.375rem;
+  color: var(--color-text-muted);
 }
 
 .citation-drawer__close {

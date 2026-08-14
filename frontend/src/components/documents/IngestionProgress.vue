@@ -2,6 +2,13 @@
 import type { TrackedIngestionTask } from '@/stores/documents'
 
 defineProps<{ tasks: TrackedIngestionTask[] }>()
+
+const statusLabels = {
+  pending: '等待处理',
+  processing: '处理中',
+  completed: '处理完成',
+  failed: '处理失败',
+} as const
 </script>
 
 <template>
@@ -10,7 +17,7 @@ defineProps<{ tasks: TrackedIngestionTask[] }>()
     <article v-for="tracked in tasks" :key="tracked.taskId" class="ingestion-progress__item">
       <div class="ingestion-progress__heading">
         <strong>文档 {{ tracked.documentId }}</strong>
-        <span>{{ tracked.task?.status ?? '等待状态更新' }}</span>
+        <span>{{ tracked.task ? statusLabels[tracked.task.status] : '等待状态更新' }}</span>
       </div>
       <template v-if="tracked.task">
         <p>阶段：{{ tracked.task.stage }}</p>

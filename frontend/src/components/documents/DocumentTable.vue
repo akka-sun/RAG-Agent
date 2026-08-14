@@ -11,6 +11,12 @@ const emit = defineEmits<{
 }>()
 
 const pendingDelete = ref<DocumentRecord | null>(null)
+const statusLabels: Record<string, string> = {
+  pending: '等待处理',
+  processing: '处理中',
+  completed: '处理完成',
+  failed: '处理失败',
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -52,7 +58,7 @@ function confirmRemove(): void {
           <td>{{ document.filename }}</td>
           <td>{{ document.parser_name }}</td>
           <td>{{ formatBytes(document.size_bytes) }}</td>
-          <td><span class="document-table__status" :data-status="document.status">{{ document.status }}</span></td>
+          <td><span class="document-table__status" :data-status="document.status">{{ statusLabels[document.status] ?? document.status }}</span></td>
           <td>{{ document.chunk_count }}</td>
           <td>{{ formatDate(document.updated_at) }}</td>
           <td class="document-table__error">{{ document.error ?? '—' }}</td>
