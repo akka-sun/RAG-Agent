@@ -198,14 +198,16 @@ docker compose --profile parser up -d mineru paddlex
 docker compose exec api uv run --no-sync alembic upgrade head
 ```
 
-检查容器与健康状态，并验证 API 存活：
+检查容器与健康状态，并验证 API 存活和基础设施就绪状态：
 
 ```powershell
 docker compose ps --all
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/health/live
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/health/ready | ConvertTo-Json -Depth 5
 ```
 
 `api`、`worker`、`postgres`、`redis`、`minio`、`milvus-etcd`、`milvus-minio` 和 `milvus-standalone` 应处于 `running` 或 `healthy` 状态，`minio-init` 应成功退出。
+`/health/live` 只确认 API 进程存活；`/health/ready` 会分别探测 PostgreSQL、Redis、MinIO 和 Milvus，并返回每项的 `status`、`latency_ms` 和脱敏 `error`。所有依赖正常时总状态为 `healthy`，任一依赖异常时为 `degraded`，但接口仍返回 HTTP 200 以便状态页展示具体故障。
 
 查看日志：
 
@@ -227,6 +229,7 @@ docker compose down
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | `GET` | `/health/live` | 存活检查 |
+| `GET` | `/health/ready` | PostgreSQL、Redis、MinIO、Milvus 就绪检查 |
 | `POST` / `GET` | `/knowledge-bases` | 创建 / 列出知识库 |
 | `GET` / `DELETE` | `/knowledge-bases/{knowledge_base_id}` | 查询 / 删除知识库 |
 | `POST` / `GET` | `/knowledge-bases/{knowledge_base_id}/conversations` | 创建 / 列出会话 |
@@ -242,6 +245,8 @@ docker compose down
 | `POST` | `/rag/documents` | 同步摄取文本到进程内示例索引 |
 | `POST` | `/rag/agent/query` | LangGraph Agent 查询：自主检索、生成回答并返回引用 |
 | `POST` | `/rag/query` | 查询 Milvus 混合检索索引并返回引用 |
+
+创建知识库时只需提交 `name` 和可选的 `description`。嵌入模型与向量维度由全局 `RAG_AGENT_EMBEDDING_MODEL`、`RAG_AGENT_EMBEDDING_DIMENSION` 配置统一决定；客户端提交这两个字段会被接口拒绝。
 
 上传文档时可使用 multipart 字段 `parser` 指定解析器：
 
