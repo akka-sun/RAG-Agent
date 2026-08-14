@@ -21,7 +21,7 @@ describe('MessageList', () => {
       props: {
         conversationId,
         messages: persisted,
-        optimisticUser: null,
+        optimisticUser: { conversationId, content: '怎么部署？' },
         draftAssistant: '使用容器部署。',
         draftCitations: [],
         phase: 'completed',

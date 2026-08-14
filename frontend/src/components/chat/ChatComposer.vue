@@ -2,15 +2,14 @@
 import { computed, ref } from 'vue'
 
 const props = defineProps<{ active?: boolean, canRetry?: boolean, disabled?: boolean }>()
-const emit = defineEmits<{ submit: [content: string], cancel: [], retry: [] }>()
+const emit = defineEmits<{ submit: [content: string, accept: () => void], cancel: [], retry: [] }>()
 const content = ref('')
 const sendDisabled = computed(() => props.active || props.disabled || content.value.trim().length === 0)
 
 function submit(): void {
   if (sendDisabled.value) return
   const normalized = content.value.trim()
-  emit('submit', normalized)
-  content.value = ''
+  emit('submit', normalized, () => { content.value = '' })
 }
 
 function keydown(event: KeyboardEvent): void {

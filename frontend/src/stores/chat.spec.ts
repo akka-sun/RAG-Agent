@@ -78,7 +78,7 @@ describe('chat store', () => {
       { event: 'message_start', data: { conversation_id: conversationId } },
       { event: 'message_end', data: { content: 'retried' } },
     ))
-    await expect(store.retry()).resolves.toBeUndefined()
+    await expect(store.retry(conversationId)).resolves.toBeUndefined()
     expect(store.draftAssistant).toBe('retried')
   })
 
@@ -97,7 +97,7 @@ describe('chat store', () => {
     expect(store.phase).toBe('failed')
     expect(store.error).toBe('连接提前结束，请重试。')
     expect(store.draftAssistant).toBe('partial')
-    await expect(store.retry()).resolves.toBeUndefined()
+    await expect(store.retry(conversationId)).resolves.toBeUndefined()
     expect(store.draftAssistant).toBe('recovered')
   })
 
@@ -175,7 +175,7 @@ describe('chat store', () => {
     expect(store.phase).toBe('failed')
     expect(store.error).toBe('backend failed')
     expect(store.draftAssistant).toBe('partial')
-    await store.retry()
+    await store.retry(conversationId)
     expect(streamMock).toHaveBeenNthCalledWith(2, conversationId, 'question', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(store.phase).toBe('completed')
     expect(store.draftAssistant).toBe('recovered')
@@ -198,7 +198,7 @@ describe('chat store', () => {
     expect(store.error).toBeNull()
     expect(store.draftAssistant).toBe('visible')
     expect(streamMock).toHaveBeenCalledTimes(1)
-    await store.retry()
+    await store.retry(conversationId)
     expect(streamMock).toHaveBeenCalledTimes(2)
     controlled.end()
     await pending
@@ -248,11 +248,58 @@ describe('chat store', () => {
     streamMock.mockReturnValue(controlled)
     const store = useChatStore()
 
-    await expect(store.retry()).rejects.toThrow('没有可重试的消息')
+    await expect(store.retry(conversationId)).rejects.toThrow('没有可重试的消息')
     const pending = store.send(conversationId, 'question')
-    await expect(store.retry()).rejects.toThrow('消息正在生成中')
+    await expect(store.retry(conversationId)).rejects.toThrow('消息正在生成中')
     store.cancel()
     controlled.end()
     await pending
+  })
+
+  it('rejects retry when the requested conversation is not the failed conversation', async () => {
+    streamMock.mockReturnValueOnce(events(
+      { event: 'message_start', data: { conversation_id: conversationId } },
+      { event: 'error', data: { message: 'failed A' } },
+    )).mockReturnValueOnce(events(
+      { event: 'message_start', data: { conversation_id: conversationId } },
+      { event: 'message_end', data: { content: 'wrong retry' } },
+    ))
+    const store = useChatStore()
+    await store.send(conversationId, 'question A')
+
+    await expect(Reflect.apply(store.retry, store, [secondConversationId])).rejects.toThrow('当前会话没有可重试的消息')
+    expect(streamMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears backend running status after a terminal message_end', async () => {
+    streamMock.mockReturnValue(events(
+      { event: 'message_start', data: { conversation_id: conversationId } },
+      { event: 'agent_status', data: { status: 'running' } },
+      { event: 'message_end', data: { content: 'done' } },
+    ))
+    const store = useChatStore()
+
+    await store.send(conversationId, 'question')
+
+    expect(store.phase).toBe('completed')
+    expect(store.status).toBeNull()
+  })
+
+  it('stays busy until authoritative message refresh finishes after message_end', async () => {
+    let resolveMessages!: (messages: typeof persistedMessages) => void
+    conversationsApi.messages.mockReturnValue(new Promise((resolve) => { resolveMessages = resolve }))
+    streamMock.mockReturnValue(events(
+      { event: 'message_start', data: { conversation_id: conversationId } },
+      { event: 'message_end', data: { content: 'done' } },
+    ))
+    const store = useChatStore()
+
+    const pending = store.send(conversationId, 'question')
+    await vi.waitFor(() => expect(store.phase).toBe('completed'))
+
+    expect((store as unknown as { busy: boolean }).busy).toBe(true)
+    resolveMessages(persistedMessages)
+    await pending
+    expect((store as unknown as { busy: boolean }).busy).toBe(false)
   })
 })

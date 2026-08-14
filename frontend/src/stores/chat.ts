@@ -1,4 +1,4 @@
-import { ref, shallowRef } from 'vue'
+import { computed, ref, shallowRef } from 'vue'
 import { defineStore } from 'pinia'
 import { streamConversationMessage, type CitationData, type SseEvent } from '@/api/sse'
 import { useConversationStore } from './conversations'
@@ -31,6 +31,7 @@ export const useChatStore = defineStore('chat', () => {
   const lastSubmittedContent = ref<string | null>(null)
   const lastConversationId = ref<string | null>(null)
   const controller = shallowRef<AbortController | null>(null)
+  const busy = computed(() => controller.value !== null)
   let generation = 0
   let retryable = false
 
@@ -52,11 +53,13 @@ export const useChatStore = defineStore('chat', () => {
     controller.value = null
     phase.value = 'cancelled'
     error.value = null
+    status.value = null
     retryable = true
   }
 
-  async function retry(): Promise<void> {
+  async function retry(conversationId: string): Promise<void> {
     if (controller.value) throw new Error('消息正在生成中')
+    if (lastConversationId.value !== conversationId) throw new Error('当前会话没有可重试的消息')
     if (!retryable || !lastConversationId.value || !lastSubmittedContent.value) {
       throw new Error('没有可重试的消息')
     }
@@ -93,6 +96,7 @@ export const useChatStore = defineStore('chat', () => {
       if (isCurrent() && !terminalEventReceived) {
         phase.value = 'failed'
         error.value = '连接提前结束，请重试。'
+        status.value = null
         retryable = true
       }
     } catch (reason) {
@@ -104,6 +108,7 @@ export const useChatStore = defineStore('chat', () => {
         phase.value = 'failed'
         error.value = errorMessage(reason)
       }
+      status.value = null
       retryable = true
     } finally {
       if (isCurrent()) controller.value = null
@@ -140,11 +145,13 @@ export const useChatStore = defineStore('chat', () => {
       case 'error':
         phase.value = 'failed'
         error.value = event.data.message
+        status.value = null
         retryable = true
         return true
       case 'message_end':
         draftAssistant.value = event.data.content
         phase.value = 'completed'
+        status.value = null
         retryable = false
         try {
           await conversationStore.loadMessages(conversationId, isCurrent)
@@ -167,6 +174,7 @@ export const useChatStore = defineStore('chat', () => {
     optimisticUser,
     lastSubmittedContent,
     lastConversationId,
+    busy,
     send,
     cancel,
     retry,

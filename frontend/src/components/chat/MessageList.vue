@@ -23,15 +23,16 @@ const displayedMessages = computed<DisplayMessage[]>(() => {
   const optimistic = props.optimisticUser?.conversationId === props.conversationId
     ? props.optimisticUser
     : null
+  const persistedOptimistic = optimistic && props.phase === 'completed'
+    && props.messages.some((message) => message.role === 'user' && message.content === optimistic.content)
 
-  if (optimistic) {
+  if (optimistic && !persistedOptimistic) {
     result.push({ id: 'optimistic-user', role: 'user', content: optimistic.content, citations: [] })
   }
 
   if (props.draftAssistant) {
     const lastPersistedAssistant = [...props.messages].reverse().find((message) => message.role === 'assistant')
     const refreshedDraft = props.phase === 'completed'
-      && !optimistic
       && lastPersistedAssistant?.content === props.draftAssistant
     if (!refreshedDraft) {
       result.push({

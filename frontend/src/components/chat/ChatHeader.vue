@@ -5,13 +5,21 @@ defineProps<{
   title: string
   knowledgeBases: KnowledgeBase[]
   selectedKnowledgeBaseId: string | null
+  railOpen: boolean
 }>()
 defineEmits<{ selectKnowledgeBase: [id: string], toggleRail: [], newChat: [] }>()
 </script>
 
 <template>
   <header class="chat-header">
-    <button type="button" class="chat-header__rail-toggle" aria-label="打开会话历史" @click="$emit('toggleRail')">☰</button>
+    <button
+      type="button"
+      class="chat-header__rail-toggle"
+      aria-label="打开会话历史"
+      aria-controls="conversation-history"
+      :aria-expanded="railOpen"
+      @click="$emit('toggleRail')"
+    >☰</button>
     <div class="chat-header__title">
       <p>当前会话</p>
       <h1>{{ title }}</h1>

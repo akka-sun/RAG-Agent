@@ -36,8 +36,12 @@ const currentConversations = computed(() => knowledgeBases.selectedId
 const messages = computed(() => conversation.value
   ? conversations.messagesByConversation[conversation.value.id] ?? []
   : [])
-const activeStream = computed(() => ['sending', 'streaming', 'retrieving'].includes(chat.phase))
-const canRetry = computed(() => chat.phase === 'failed' || chat.phase === 'cancelled')
+const currentChatState = computed(() => conversation.value !== null && chat.lastConversationId === conversation.value.id)
+const visiblePhase = computed(() => currentChatState.value ? chat.phase : 'idle')
+const visibleStatus = computed(() => currentChatState.value ? chat.status : null)
+const visibleError = computed(() => currentChatState.value ? chat.error : null)
+const activeStream = computed(() => currentChatState.value && chat.busy)
+const canRetry = computed(() => currentChatState.value && (chat.phase === 'failed' || chat.phase === 'cancelled'))
 const draftForConversation = computed(() => conversation.value && chat.lastConversationId === conversation.value.id ? chat.draftAssistant : '')
 const citationsForConversation = computed(() => conversation.value && chat.lastConversationId === conversation.value.id ? chat.citations : [])
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -120,6 +124,7 @@ async function startNewChat(): Promise<void> {
     return
   }
   if (activeStream.value) chat.cancel()
+  railOpen.value = false
   await router.push({ name: 'chat', query: { new: '1' } })
 }
 
@@ -136,18 +141,22 @@ async function create(title: string): Promise<void> {
   }
 }
 
-async function send(content: string): Promise<void> {
+async function send(content: string, accept: () => void): Promise<void> {
   if (!conversation.value || !knowledgeBases.selectedId) return
   try {
-    await chat.send(conversation.value.id, content)
+    const conversationId = conversation.value.id
+    const pending = chat.send(conversationId, content)
+    if (chat.busy && chat.lastConversationId === conversationId) accept()
+    await pending
   } catch {
     // The chat store exposes the backend error through AgentStatus.
   }
 }
 
 async function retry(): Promise<void> {
+  if (!conversation.value) return
   try {
-    await chat.retry()
+    await chat.retry(conversation.value.id)
   } catch {
     // Retry eligibility is reflected by the composer and store state.
   }
@@ -184,6 +193,7 @@ watch(() => route.query, resolveRoute)
       :title="conversation?.title ?? '新对话'"
       :knowledge-bases="knowledgeBases.items"
       :selected-knowledge-base-id="knowledgeBases.selectedId"
+      :rail-open="railOpen"
       @select-knowledge-base="changeKnowledgeBase"
       @toggle-rail="railOpen = !railOpen"
       @new-chat="startNewChat"
@@ -199,11 +209,11 @@ watch(() => route.query, resolveRoute)
           :optimistic-user="chat.optimisticUser"
           :draft-assistant="draftForConversation"
           :draft-citations="citationsForConversation"
-          :phase="chat.phase"
+          :phase="visiblePhase"
           @citation="activeCitation = $event"
         />
         <div class="chat-page__composer">
-          <AgentStatus :phase="chat.phase" :status="chat.status" :error="chat.error" />
+          <AgentStatus :phase="visiblePhase" :status="visibleStatus" :error="visibleError" />
           <ChatComposer :active="activeStream" :can-retry="canRetry" @submit="send" @cancel="chat.cancel" @retry="retry" />
         </div>
       </template>

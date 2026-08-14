@@ -17,4 +17,10 @@ describe('AgentStatus', () => {
     const wrapper = mount(AgentStatus, { props: { phase: 'failed', status: null, error: '模型服务不可用' } })
     expect(wrapper.get('[role="alert"]').text()).toContain('模型服务不可用')
   })
+
+  it('does not render stale running status after completion', () => {
+    const wrapper = mount(AgentStatus, { props: { phase: 'completed', status: 'running', error: null } })
+    expect(wrapper.text()).toBe('')
+    expect(wrapper.find('[role="status"]').exists()).toBe(false)
+  })
 })

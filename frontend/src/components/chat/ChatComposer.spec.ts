@@ -11,8 +11,23 @@ describe('ChatComposer', () => {
     expect(wrapper.emitted('submit')).toBeUndefined()
 
     await textarea.trigger('keydown', { key: 'Enter' })
-    expect(wrapper.emitted('submit')?.[0]).toEqual(['怎么部署？'])
+    expect(wrapper.emitted('submit')?.[0]?.[0]).toBe('怎么部署？')
+    const accept = wrapper.emitted('submit')?.[0]?.[1]
+    expect(accept).toBeTypeOf('function')
+    expect((textarea.element as HTMLTextAreaElement).value).toBe('  怎么部署？  ')
+    ;(accept as () => void)()
+    await wrapper.vm.$nextTick()
     expect((textarea.element as HTMLTextAreaElement).value).toBe('')
+  })
+
+  it('keeps the draft when the parent does not accept the send', async () => {
+    const wrapper = mount(ChatComposer)
+    const textarea = wrapper.get('textarea')
+    await textarea.setValue('不能丢失的草稿')
+
+    await textarea.trigger('keydown', { key: 'Enter' })
+
+    expect((textarea.element as HTMLTextAreaElement).value).toBe('不能丢失的草稿')
   })
 
   it('blocks whitespace-only input and disables sending during an active stream', async () => {

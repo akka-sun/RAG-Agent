@@ -8,7 +8,7 @@ const label = computed(() => {
   if (props.phase === 'cancelled') return '生成已停止'
   if (props.phase === 'retrieving') return '正在检索知识库'
   if (props.phase === 'sending') return '正在发送消息'
-  if (props.phase === 'streaming' || props.status === 'running') return '助手正在生成回答'
+  if (props.phase === 'streaming') return '助手正在生成回答'
   return ''
 })
 </script>

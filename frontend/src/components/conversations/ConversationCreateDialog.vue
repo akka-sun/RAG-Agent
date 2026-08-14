@@ -1,12 +1,17 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { nextTick, ref, watch } from 'vue'
 
 const props = defineProps<{ open: boolean, busy?: boolean }>()
 const emit = defineEmits<{ create: [title: string], close: [] }>()
 const title = ref('')
+const titleInput = ref<HTMLInputElement | null>(null)
 const error = ref<string | null>(null)
 
-watch(() => props.open, (open) => {
+watch(() => props.open, async (open) => {
+  if (open) {
+    await nextTick()
+    titleInput.value?.focus()
+  }
   if (!open) {
     title.value = ''
     error.value = null
@@ -39,7 +44,7 @@ function close(): void {
       <form @submit.prevent="submit">
         <label>
           会话标题
-          <input v-model="title" :disabled="busy" maxlength="200" autocomplete="off">
+          <input ref="titleInput" v-model="title" :disabled="busy" maxlength="200" autocomplete="off">
         </label>
         <p v-if="error" role="alert">{{ error }}</p>
         <div class="conversation-create-dialog__actions">
