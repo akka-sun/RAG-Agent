@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import ModalDialog from '@/components/common/ModalDialog.vue'
 import type { DocumentRecord } from '@/types/api'
 
 defineProps<{ documents: DocumentRecord[] }>()
@@ -81,16 +82,20 @@ function confirmRemove(): void {
     </table>
   </div>
 
-  <div v-if="pendingDelete" class="document-table__confirm" role="presentation">
-    <section role="dialog" aria-modal="true" :aria-label="`确认删除 ${pendingDelete.filename}`">
+  <ModalDialog
+    :open="pendingDelete !== null"
+    :aria-label="pendingDelete ? `确认删除 ${pendingDelete.filename}` : undefined"
+    @close="pendingDelete = null"
+  >
+    <div v-if="pendingDelete" class="document-table__confirm-content">
       <h2>确认删除 {{ pendingDelete.filename }}</h2>
       <p>文档原文、解析结果和索引将被删除，且无法恢复。</p>
       <div class="document-table__confirm-actions">
         <button type="button" class="button button--secondary" @click="pendingDelete = null">取消</button>
         <button name="confirm-remove-document" type="button" class="button button--danger" @click="confirmRemove">确认删除</button>
       </div>
-    </section>
-  </div>
+    </div>
+  </ModalDialog>
 </template>
 
 <style scoped>
@@ -103,9 +108,7 @@ function confirmRemove(): void {
 .document-table__status[data-status="failed"], .document-table__error { color: var(--color-destructive); }
 .document-table__actions { display: flex; flex-wrap: wrap; gap: 0.5rem; min-width: 18rem; }
 .document-table__actions .button { min-height: 2rem; padding: 0.25rem 0.625rem; }
-.document-table__confirm { position: fixed; z-index: 10; inset: 0; display: grid; place-items: center; padding: 1rem; background: rgb(23 26 43 / 45%); }
-.document-table__confirm section { width: min(100%, 28rem); padding: 1.5rem; border-radius: 0.75rem; background: var(--color-surface); box-shadow: var(--shadow-surface); }
-.document-table__confirm h2, .document-table__confirm p { margin: 0; }
-.document-table__confirm p { margin-top: 0.75rem; color: var(--color-text-muted); }
+.document-table__confirm-content h2, .document-table__confirm-content p { margin: 0; }
+.document-table__confirm-content p { margin-top: 0.75rem; color: var(--color-text-muted); }
 .document-table__confirm-actions { display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem; }
 </style>

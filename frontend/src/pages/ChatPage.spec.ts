@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SseEvent } from '@/api/sse'
+import { ApiError } from '@/api/client'
 import { useChatStore } from '@/stores/chat'
 import { useKnowledgeBaseStore } from '@/stores/knowledge-bases'
 import ChatPage from './ChatPage.vue'
@@ -191,7 +192,8 @@ describe('ChatPage', () => {
     const { wrapper, router } = await mountPage()
     await wrapper.get('textarea').setValue('如何部署？')
     await wrapper.get('textarea').trigger('keydown', { key: 'Enter' })
-    await vi.waitFor(() => expect(useChatStore().error).toBe('refresh failed'))
+    await vi.waitFor(() => expect(useChatStore().syncError).toBe('refresh failed'))
+    expect(wrapper.get('[role="alert"]').text()).toContain('refresh failed')
     expect(wrapper.findAll('[aria-label="你的消息"]')).toHaveLength(2)
     expect(wrapper.findAll('[aria-label="助手消息"]')).toHaveLength(2)
 
@@ -211,6 +213,68 @@ describe('ChatPage', () => {
     expect(useChatStore().draftAssistant).toBe('')
     expect(wrapper.findAll('[aria-label="你的消息"]')).toHaveLength(2)
     expect(wrapper.findAll('[aria-label="助手消息"]')).toHaveLength(2)
+  })
+
+  it('reloads messages from the sync warning without resending the completed prompt', async () => {
+    const reconciledMessages = [
+      ...persistedMessages,
+      { ...persistedMessages[0], id: 'u2', created_at: '2026-08-14T00:00:02Z' },
+      { ...persistedMessages[1], id: 'a2', created_at: '2026-08-14T00:00:03Z' },
+    ]
+    conversationsApi.messages
+      .mockResolvedValueOnce(persistedMessages)
+      .mockRejectedValueOnce(new Error('消息同步失败'))
+      .mockResolvedValueOnce(reconciledMessages)
+    streamMock.mockReturnValue(events(
+      { event: 'message_start', data: { conversation_id: conversation.id } },
+      { event: 'message_end', data: { content: '使用容器。' } },
+    ))
+    const { wrapper } = await mountPage()
+
+    await wrapper.get('textarea').setValue('如何部署？')
+    await wrapper.get('textarea').trigger('keydown', { key: 'Enter' })
+    await vi.waitFor(() => expect(wrapper.text()).toContain('消息同步失败'))
+    await wrapper.get('button[name="reload-messages"]').trigger('click')
+    await vi.waitFor(() => expect(useChatStore().syncError).toBeNull())
+
+    expect(streamMock).toHaveBeenCalledTimes(1)
+    expect(conversationsApi.messages).toHaveBeenCalledTimes(3)
+    expect(wrapper.text()).not.toContain('消息同步失败')
+  })
+
+  it('treats only an ApiError 404 as a missing conversation', async () => {
+    conversationsApi.get.mockRejectedValue(new ApiError(404, 'conversation_not_found', '后端 404'))
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'chat', component: ChatPage }, { path: '/conversations', name: 'conversations', component: { template: '<div />' } }] })
+    await router.push(`/?conversation=${conversation.id}`)
+    await router.isReady()
+
+    const wrapper = mount(ChatPage, { global: { plugins: [router] } })
+    await vi.waitFor(() => expect(wrapper.text()).toContain('会话不存在或已失效'))
+
+    expect(wrapper.text()).toContain('返回会话列表')
+    expect(wrapper.text()).not.toContain('后端 404')
+  })
+
+  it.each([
+    ['GET', () => conversationsApi.get.mockRejectedValueOnce(new ApiError(503, 'get_failed', '读取会话失败'))],
+    ['list', () => conversationsApi.list
+      .mockRejectedValueOnce(new ApiError(503, 'list_failed', '会话列表加载失败'))
+      .mockRejectedValueOnce(new ApiError(503, 'list_failed', '会话列表加载失败'))],
+    ['messages', () => conversationsApi.messages.mockRejectedValueOnce(new ApiError(503, 'messages_failed', '消息历史加载失败'))],
+  ])('shows and retries a normalized non-404 %s failure', async (_boundary, arrangeFailure) => {
+    arrangeFailure()
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'chat', component: ChatPage }, { path: '/conversations', name: 'conversations', component: { template: '<div />' } }] })
+    await router.push(`/?conversation=${conversation.id}`)
+    await router.isReady()
+    const wrapper = mount(ChatPage, { global: { plugins: [router] } })
+    const expectedMessage = _boundary === 'GET' ? '读取会话失败' : _boundary === 'list' ? '会话列表加载失败' : '消息历史加载失败'
+
+    await vi.waitFor(() => expect(wrapper.text()).toContain(expectedMessage))
+    expect(wrapper.text()).not.toContain('会话不存在或已失效')
+    expect(wrapper.text()).toContain('返回会话列表')
+
+    await wrapper.get('button[name="retry-conversation"]').trigger('click')
+    await vi.waitFor(() => expect(wrapper.text()).toContain('部署讨论'))
   })
 
   it('cancels active A during direct route resolution to B so B can send and stale A cannot pollute it', async () => {

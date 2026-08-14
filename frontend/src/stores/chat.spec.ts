@@ -240,8 +240,34 @@ describe('chat store', () => {
 
     expect(store.phase).toBe('completed')
     expect(store.draftAssistant).toBe('authoritative')
-    expect(store.error).toBe('refresh failed')
+    expect(store.error).toBeNull()
+    expect(store.syncError).toBe('refresh failed')
     expect(store.optimisticUser).toEqual({ conversationId, content: 'question' })
+  })
+
+  it('reloads persisted messages without resending and clears the sync warning only after authoritative reconciliation', async () => {
+    const reconciledMessages = [
+      ...persistedMessages,
+      { ...persistedMessages[0], id: 'u2', created_at: '2026-08-14T00:00:02Z' },
+      { ...persistedMessages[1], id: 'a2', created_at: '2026-08-14T00:00:03Z' },
+    ]
+    conversationsApi.messages
+      .mockRejectedValueOnce(new Error('refresh failed'))
+      .mockResolvedValueOnce(reconciledMessages)
+    streamMock.mockReturnValue(events(
+      { event: 'message_start', data: { conversation_id: conversationId } },
+      { event: 'message_end', data: { content: 'authoritative' } },
+    ))
+    const store = useChatStore()
+
+    await store.send(conversationId, 'question')
+    await store.reloadPersistedMessages(conversationId)
+
+    expect(streamMock).toHaveBeenCalledTimes(1)
+    expect(conversationsApi.messages).toHaveBeenCalledTimes(2)
+    expect(store.syncError).toBeNull()
+    expect(store.optimisticUser).toBeNull()
+    expect(store.draftAssistant).toBe('')
   })
 
   it('rejects retry before a failed or cancelled message and while a stream is active', async () => {

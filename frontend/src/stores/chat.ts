@@ -25,6 +25,8 @@ export const useChatStore = defineStore('chat', () => {
   const phase = ref<ChatPhase>('idle')
   const citations = ref<CitationData[]>([])
   const error = ref<string | null>(null)
+  const syncError = ref<string | null>(null)
+  const syncingMessages = ref(false)
   const status = ref<string | null>(null)
   const retrievalDetails = ref<Record<string, unknown> | null>(null)
   const optimisticUser = ref<OptimisticUserMessage | null>(null)
@@ -82,6 +84,7 @@ export const useChatStore = defineStore('chat', () => {
     phase.value = 'sending'
     citations.value = []
     error.value = null
+    syncError.value = null
     status.value = null
     retrievalDetails.value = null
 
@@ -138,7 +141,30 @@ export const useChatStore = defineStore('chat', () => {
     draftAssistant.value = ''
     citations.value = []
     error.value = null
+    syncError.value = null
     return true
+  }
+
+  async function reloadPersistedMessages(
+    conversationId: string,
+    isCurrent: () => boolean = () => true,
+  ): Promise<boolean> {
+    if (conversationId !== lastConversationId.value || phase.value !== 'completed') return false
+    syncingMessages.value = true
+    try {
+      await conversationStore.loadMessages(conversationId, isCurrent)
+      if (!isCurrent()) return false
+      const reconciled = reconcilePersisted(conversationId)
+      if (!reconciled) syncError.value = '服务器消息尚未同步完成，请重新加载消息。'
+      return reconciled
+    } catch (reason) {
+      if (!isCurrent()) return false
+      conversationStore.error = null
+      syncError.value = errorMessage(reason)
+      return false
+    } finally {
+      if (isCurrent()) syncingMessages.value = false
+    }
   }
 
   async function reduce(event: SseEvent, conversationId: string, isCurrent: () => boolean): Promise<boolean> {
@@ -179,12 +205,7 @@ export const useChatStore = defineStore('chat', () => {
         phase.value = 'completed'
         status.value = null
         retryable = false
-        try {
-          await conversationStore.loadMessages(conversationId, isCurrent)
-          if (isCurrent()) reconcilePersisted(conversationId)
-        } catch (reason) {
-          if (isCurrent()) error.value = errorMessage(reason)
-        }
+        await reloadPersistedMessages(conversationId, isCurrent)
         return true
     }
     return false
@@ -195,6 +216,8 @@ export const useChatStore = defineStore('chat', () => {
     phase,
     citations,
     error,
+    syncError,
+    syncingMessages,
     status,
     retrievalDetails,
     optimisticUser,
@@ -203,6 +226,7 @@ export const useChatStore = defineStore('chat', () => {
     submissionBaselineMessageIds,
     busy,
     reconcilePersisted,
+    reloadPersistedMessages,
     send,
     cancel,
     retry,

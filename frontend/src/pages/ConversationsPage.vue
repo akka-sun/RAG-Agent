@@ -5,6 +5,7 @@ import ConversationCreateDialog from '@/components/conversations/ConversationCre
 import ConversationList from '@/components/conversations/ConversationList.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import InlineAlert from '@/components/common/InlineAlert.vue'
+import ModalDialog from '@/components/common/ModalDialog.vue'
 import { useConversationStore } from '@/stores/conversations'
 import { useKnowledgeBaseStore } from '@/stores/knowledge-bases'
 
@@ -108,16 +109,16 @@ watch(selectedKnowledgeBaseId, load)
   </section>
 
   <ConversationCreateDialog :open="createOpen" :busy="creating" @create="create" @close="createOpen = false" />
-  <div v-if="deletingId" class="conversations-page__confirm" role="presentation">
-    <section role="dialog" aria-modal="true" aria-label="删除会话">
+  <ModalDialog :open="deletingId !== null" aria-label="删除会话" @close="deletingId = null">
+    <div class="conversations-page__confirm-content">
       <h2>删除会话</h2>
       <p>删除后将无法恢复该会话及其消息。</p>
       <div>
         <button type="button" class="button button--secondary" @click="deletingId = null">取消</button>
         <button type="button" class="button button--danger" @click="remove">删除</button>
       </div>
-    </section>
-  </div>
+    </div>
+  </ModalDialog>
 </template>
 
 <style scoped>
@@ -125,8 +126,7 @@ watch(selectedKnowledgeBaseId, load)
 .conversations-page__knowledge-base { display: grid; gap: 0.5rem; max-width: 24rem; font-weight: 600; }
 .conversations-page__knowledge-base select { padding: 0.625rem 0.75rem; border: 1px solid var(--color-border); border-radius: 0.5rem; background: var(--color-surface); }
 .conversations-page__heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-.conversations-page__heading h2, .conversations-page__confirm h2, .conversations-page__confirm p { margin: 0; }
-.conversations-page__confirm { position: fixed; z-index: 10; inset: 0; display: grid; place-items: center; padding: 1rem; background: rgb(23 26 43 / 45%); }
-.conversations-page__confirm section { display: grid; gap: 1rem; width: min(100%, 28rem); padding: 1.5rem; border-radius: 0.75rem; background: var(--color-surface); box-shadow: var(--shadow-surface); }
-.conversations-page__confirm section > div { display: flex; justify-content: flex-end; gap: 0.75rem; }
+.conversations-page__heading h2, .conversations-page__confirm-content h2, .conversations-page__confirm-content p { margin: 0; }
+.conversations-page__confirm-content { display: grid; gap: 1rem; }
+.conversations-page__confirm-content > div { display: flex; justify-content: flex-end; gap: 0.75rem; }
 </style>

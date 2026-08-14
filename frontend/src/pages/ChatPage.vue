@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { CitationData } from '@/api/sse'
 import { conversationsApi } from '@/api/resources'
+import { ApiError } from '@/api/client'
 import AgentStatus from '@/components/chat/AgentStatus.vue'
 import ChatComposer from '@/components/chat/ChatComposer.vue'
 import ChatHeader from '@/components/chat/ChatHeader.vue'
@@ -22,6 +23,7 @@ const chat = useChatStore()
 const conversations = useConversationStore()
 const knowledgeBases = useKnowledgeBaseStore()
 const pageError = ref<string | null>(null)
+const routeErrorKind = ref<'not-found' | 'error' | null>(null)
 const loading = ref(false)
 const creating = ref(false)
 const createOpen = ref(false)
@@ -40,6 +42,7 @@ const currentChatState = computed(() => conversation.value !== null && chat.last
 const visiblePhase = computed(() => currentChatState.value ? chat.phase : 'idle')
 const visibleStatus = computed(() => currentChatState.value ? chat.status : null)
 const visibleError = computed(() => currentChatState.value ? chat.error : null)
+const visibleSyncError = computed(() => currentChatState.value ? chat.syncError : null)
 const activeStream = computed(() => currentChatState.value && chat.busy)
 const canRetry = computed(() => currentChatState.value && (chat.phase === 'failed' || chat.phase === 'cancelled'))
 const draftForConversation = computed(() => conversation.value && chat.lastConversationId === conversation.value.id ? chat.draftAssistant : '')
@@ -50,12 +53,17 @@ const baselineForConversation = computed(() => conversation.value && chat.lastCo
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 let routeGeneration = 0
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : '会话加载失败，请稍后重试。'
+}
+
 async function resolveRoute(): Promise<void> {
   const generation = ++routeGeneration
   const isCurrent = () => generation === routeGeneration
   const targetConversationId = isNewFlow.value ? null : requestedConversationId.value
   if (chat.busy && chat.lastConversationId !== targetConversationId) chat.cancel()
   pageError.value = null
+  routeErrorKind.value = null
   conversation.value = null
   createOpen.value = false
   loading.value = false
@@ -79,6 +87,7 @@ async function resolveRoute(): Promise<void> {
   if (!uuidPattern.test(conversationId)) {
     conversations.select(null)
     pageError.value = '会话不存在或已失效，请从会话历史中重新选择。'
+    routeErrorKind.value = 'not-found'
     return
   }
 
@@ -94,10 +103,16 @@ async function resolveRoute(): Promise<void> {
     if (!isCurrent()) return
     chat.reconcilePersisted(item.id)
     conversation.value = item
-  } catch {
+  } catch (reason) {
     if (!isCurrent()) return
     conversations.select(null)
-    pageError.value = '会话不存在或已失效，请从会话历史中重新选择。'
+    if (reason instanceof ApiError && reason.status === 404) {
+      routeErrorKind.value = 'not-found'
+      pageError.value = '会话不存在或已失效，请从会话历史中重新选择。'
+    } else {
+      routeErrorKind.value = 'error'
+      pageError.value = errorMessage(reason)
+    }
   } finally {
     if (isCurrent()) loading.value = false
   }
@@ -168,6 +183,11 @@ async function retry(): Promise<void> {
   }
 }
 
+async function reloadMessages(): Promise<void> {
+  if (!conversation.value) return
+  await chat.reloadPersistedMessages(conversation.value.id)
+}
+
 onMounted(async () => {
   if (knowledgeBases.items.length === 0 && !knowledgeBases.loading) await knowledgeBases.load()
   if (knowledgeBases.selectedId) {
@@ -206,9 +226,32 @@ watch(() => route.query, resolveRoute)
     />
 
     <div class="chat-page__body">
-      <InlineAlert v-if="pageError || conversations.error || knowledgeBases.error" :message="pageError ?? conversations.error ?? knowledgeBases.error ?? ''" />
+      <div v-if="pageError && routeErrorKind" class="chat-page__route-error">
+        <InlineAlert :message="pageError" />
+        <div class="chat-page__route-error-actions">
+          <button
+            v-if="routeErrorKind === 'error'"
+            name="retry-conversation"
+            type="button"
+            class="button button--secondary"
+            @click="resolveRoute"
+          >重试</button>
+          <RouterLink class="button button--secondary" :to="{ name: 'conversations' }">返回会话列表</RouterLink>
+        </div>
+      </div>
+      <InlineAlert v-else-if="pageError || conversations.error || knowledgeBases.error" :message="pageError ?? conversations.error ?? knowledgeBases.error ?? ''" />
       <p v-if="loading" class="chat-page__loading" role="status">正在加载会话…</p>
       <template v-else-if="conversation">
+        <div v-if="visibleSyncError" class="chat-page__sync-error" role="alert">
+          <span>回答已生成，但消息同步失败：{{ visibleSyncError }}</span>
+          <button
+            name="reload-messages"
+            type="button"
+            class="button button--secondary"
+            :disabled="chat.syncingMessages"
+            @click="reloadMessages"
+          >重新加载消息</button>
+        </div>
         <MessageList
           :conversation-id="conversation.id"
           :messages="messages"
@@ -236,3 +279,25 @@ watch(() => route.query, resolveRoute)
   <ConversationCreateDialog :open="createOpen" :busy="creating" @create="create" @close="router.push({ name: 'chat' })" />
   <CitationDrawer :open="activeCitation !== null" :citation="activeCitation" @close="activeCitation = null" />
 </template>
+
+<style scoped>
+.chat-page__sync-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--color-destructive), white 65%);
+  border-radius: 0.5rem;
+  color: var(--color-destructive);
+  background: color-mix(in srgb, var(--color-destructive), white 94%);
+}
+
+.chat-page__route-error { display: grid; gap: 0.75rem; margin: 0 1rem; }
+.chat-page__route-error-actions { display: flex; gap: 0.75rem; }
+
+@media (max-width: 36rem) {
+  .chat-page__sync-error { align-items: stretch; flex-direction: column; }
+}
+</style>

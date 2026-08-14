@@ -136,9 +136,9 @@ test('labels unsupported infrastructure and supports refreshed chat and knowledg
 
   const detailResponse = await page.goto(`/knowledge-bases/${KB_ID}`)
   expect(detailResponse?.status()).toBe(200)
-  await expect(page.getByRole('heading', { name: '文档', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '产品资料库', exact: true })).toBeVisible()
   await page.reload()
-  await expect(page.getByRole('heading', { name: '文档', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '产品资料库', exact: true })).toBeVisible()
   await expectNoPageOverflow(page)
 
   const crossOriginApi = 'http://127.0.0.1:8000/api/v1/health/live'

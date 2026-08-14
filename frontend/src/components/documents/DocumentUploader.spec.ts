@@ -7,6 +7,7 @@ import DocumentPreview from './DocumentPreview.vue'
 import DocumentTable from './DocumentTable.vue'
 import IngestionProgress from './IngestionProgress.vue'
 import KnowledgeBaseDetailPage from '@/pages/KnowledgeBaseDetailPage.vue'
+import { ApiError } from '@/api/client'
 import { useDocumentStore } from '@/stores/documents'
 import type { DocumentRecord, IngestionTask } from '@/types/api'
 
@@ -21,8 +22,9 @@ const api = vi.hoisted(() => ({
   delete: vi.fn(),
   task: vi.fn(),
 }))
+const knowledgeBasesApi = vi.hoisted(() => ({ get: vi.fn() }))
 
-vi.mock('@/api/resources', () => ({ documentsApi: api }))
+vi.mock('@/api/resources', () => ({ documentsApi: api, knowledgeBasesApi }))
 const router = vi.hoisted(() => ({ route: null as unknown as { params: { knowledgeBaseId: string } } }))
 vi.mock('vue-router', () => ({ useRoute: () => router.route }))
 
@@ -301,6 +303,15 @@ describe('document management presentation', () => {
 describe('knowledge-base document workspace', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    knowledgeBasesApi.get.mockResolvedValue({
+      id: 'knowledge-base-id',
+      name: '产品资料库',
+      description: '面向客服的产品资料。',
+      embedding_model: 'bge-m3',
+      embedding_dimension: 1024,
+      created_at: '2026-08-14T00:00:00Z',
+      updated_at: '2026-08-14T00:01:00Z',
+    })
   })
 
   afterEach(() => {
@@ -318,12 +329,57 @@ describe('knowledge-base document workspace', () => {
     const wrapper = mount(KnowledgeBaseDetailPage, { global: { plugins: [pinia] } })
     await flushPromises()
 
+    expect(knowledgeBasesApi.get).toHaveBeenCalledWith('knowledge-base-id')
     expect(api.list).toHaveBeenCalledWith('knowledge-base-id')
+    expect(wrapper.text()).toContain('产品资料库')
+    expect(wrapper.text()).toContain('面向客服的产品资料。')
+    expect(wrapper.text()).toContain('bge-m3')
+    expect(wrapper.text()).toContain('1024')
+    expect(wrapper.text()).toContain('2026年8月14日')
     expect(wrapper.text()).toContain('report.pdf')
     expect(wrapper.findComponent(DocumentUploader).exists()).toBe(true)
 
     wrapper.unmount()
     expect(stop).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows a recoverable parent-not-found state without document management controls', async () => {
+    router.route = reactive({ params: { knowledgeBaseId: 'missing-kb' } })
+    knowledgeBasesApi.get.mockRejectedValue(new ApiError(404, 'knowledge_base_not_found', '知识库不存在'))
+    const pinia = createPinia()
+    setActivePinia(pinia)
+
+    const wrapper = mount(KnowledgeBaseDetailPage, { global: { plugins: [pinia] } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('知识库不存在或已被删除')
+    expect(wrapper.text()).toContain('返回知识库列表')
+    expect(wrapper.findComponent(DocumentUploader).exists()).toBe(false)
+    expect(wrapper.findComponent(DocumentTable).exists()).toBe(false)
+    expect(api.list).not.toHaveBeenCalled()
+  })
+
+  it('shows the real parent load error and retries without treating it as not found', async () => {
+    router.route = reactive({ params: { knowledgeBaseId: 'knowledge-base-id' } })
+    knowledgeBasesApi.get
+      .mockRejectedValueOnce(new ApiError(503, 'service_unavailable', '知识库服务暂不可用'))
+    api.list.mockResolvedValue([])
+    const pinia = createPinia()
+    setActivePinia(pinia)
+
+    const wrapper = mount(KnowledgeBaseDetailPage, { global: { plugins: [pinia] } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('知识库服务暂不可用')
+    expect(wrapper.text()).not.toContain('知识库不存在或已被删除')
+    expect(wrapper.findComponent(DocumentUploader).exists()).toBe(false)
+
+    await wrapper.get('button[name="retry-knowledge-base"]').trigger('click')
+    await flushPromises()
+
+    expect(knowledgeBasesApi.get).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('产品资料库')
+    expect(wrapper.findComponent(DocumentUploader).exists()).toBe(true)
   })
 
   it('resumes known work after navigating away and back', async () => {
