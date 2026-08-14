@@ -16,7 +16,7 @@ from app.agent.graph import build_agent_graph
 from app.agent.tools import RetrievalTool
 from app.config import get_settings
 from app.core.exceptions import IngestionQueueUnavailableError
-from app.db import get_session
+from app.db import async_session_factory, get_session
 from app.infrastructure.chat_client import ChatClient
 from app.infrastructure.milvus_store import MilvusChunkStore, MilvusDocumentIndex
 from app.infrastructure.model_clients import EmbeddingClient, RerankerClient
@@ -135,13 +135,13 @@ ObjectStorageDependency = Annotated[
 
 
 def get_readiness_service(
-    session: SessionDependency,
     minio: MinioClientDependency,
 ) -> ReadinessService:
     settings = get_settings()
 
     async def postgresql_probe() -> None:
-        await session.execute(text("SELECT 1"))
+        async with async_session_factory() as session:
+            await session.execute(text("SELECT 1"))
 
     async def redis_probe() -> None:
         redis = cast(

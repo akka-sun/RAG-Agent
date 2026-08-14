@@ -1,8 +1,9 @@
 import asyncio
 import os
 import threading
-from collections.abc import Iterator
-from typing import Any, cast
+from collections.abc import AsyncIterator, Iterator
+from types import TracebackType
+from typing import Any, Self, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -106,11 +107,49 @@ def test_live_health_does_not_resolve_readiness_dependencies() -> None:
 
 
 class FakeSession:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        error: Exception | None = None,
+        release: asyncio.Event | None = None,
+    ) -> None:
+        self.error = error
+        self.release = release
         self.statements: list[str] = []
+        self.close_count = 0
+        self.execute_started = asyncio.Event()
+        self.closed = asyncio.Event()
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        del exc_type, exc_value, traceback
+        self.close_count += 1
+        self.closed.set()
 
     async def execute(self, statement: object) -> None:
         self.statements.append(str(statement))
+        self.execute_started.set()
+        if self.release is not None:
+            await self.release.wait()
+        if self.error is not None:
+            raise self.error
+
+
+class FakeSessionFactory:
+    def __init__(self, session: FakeSession) -> None:
+        self.session = session
+        self.calls = 0
+
+    def __call__(self) -> FakeSession:
+        self.calls += 1
+        return self.session
 
 
 class FakeRedis:
@@ -153,11 +192,38 @@ class FakeMilvus:
         self.closed = True
 
 
+class HealthyMinio(FakeMinio):
+    def bucket_exists(self, bucket: str) -> bool:
+        self.calls.append(bucket)
+        return True
+
+
+class HealthyMilvus(FakeMilvus):
+    def has_collection(self, collection: str) -> bool:
+        self.calls.append(collection)
+        return True
+
+
+def healthy_milvus_client(*, uri: str, token: str) -> HealthyMilvus:
+    del uri, token
+    return HealthyMilvus()
+
+
+def use_probe_session(
+    monkeypatch: pytest.MonkeyPatch,
+    session: FakeSession,
+) -> FakeSessionFactory:
+    factory = FakeSessionFactory(session)
+    monkeypatch.setattr(dependencies, "async_session_factory", factory, raising=False)
+    return factory
+
+
 @pytest.mark.asyncio
 async def test_false_storage_checks_are_unhealthy_without_creating_resources(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = FakeSession()
+    session_factory = use_probe_session(monkeypatch, session)
     redis_instances: list[FakeRedis] = []
     minio = FakeMinio()
     milvus_instances: list[FakeMilvus] = []
@@ -176,10 +242,7 @@ async def test_false_storage_checks_are_unhealthy_without_creating_resources(
 
     monkeypatch.setattr(dependencies, "create_pool", fake_create_pool)
     monkeypatch.setattr(dependencies, "MilvusClient", fake_milvus_client)
-    service = dependencies.get_readiness_service(
-        cast(Any, session),
-        cast(Any, minio),
-    )
+    service = dependencies.get_readiness_service(cast(Any, minio))
     assert redis_instances == []
     assert milvus_instances == []
 
@@ -189,7 +252,9 @@ async def test_false_storage_checks_are_unhealthy_without_creating_resources(
     assert result.status == "degraded"
     assert result.services["minio"].error == "MinIO 连接失败"
     assert result.services["milvus"].error == "Milvus 连接失败"
+    assert session_factory.calls == 1
     assert session.statements == ["SELECT 1"]
+    assert session.close_count == 1
     assert minio.calls == [settings.minio_bucket]
     assert len(redis_instances) == 1
     assert redis_instances[0].pinged
@@ -223,11 +288,6 @@ async def test_timed_out_milvus_worker_closes_once_after_late_completion(
             close_count += 1
             closed.set()
 
-    class HealthyMinio(FakeMinio):
-        def bucket_exists(self, bucket: str) -> bool:
-            self.calls.append(bucket)
-            return True
-
     async def fake_create_pool(settings: object) -> FakeRedis:
         del settings
         return FakeRedis()
@@ -241,10 +301,9 @@ async def test_timed_out_milvus_worker_closes_once_after_late_completion(
 
     monkeypatch.setattr(dependencies, "create_pool", fake_create_pool)
     monkeypatch.setattr(dependencies, "MilvusClient", fake_milvus_client)
-    service = dependencies.get_readiness_service(
-        cast(Any, FakeSession()),
-        cast(Any, HealthyMinio()),
-    )
+    session = FakeSession()
+    use_probe_session(monkeypatch, session)
+    service = dependencies.get_readiness_service(cast(Any, HealthyMinio()))
 
     check_task = asyncio.create_task(service.check())
     assert await asyncio.wait_for(asyncio.to_thread(started.wait, 0.2), timeout=0.3)
@@ -276,10 +335,9 @@ async def test_failing_redis_and_milvus_probes_still_close_resources(
 
     monkeypatch.setattr(dependencies, "create_pool", fake_create_pool)
     monkeypatch.setattr(dependencies, "MilvusClient", fake_milvus_client)
-    service = dependencies.get_readiness_service(
-        cast(Any, FakeSession()),
-        cast(Any, FakeMinio()),
-    )
+    session = FakeSession()
+    use_probe_session(monkeypatch, session)
+    service = dependencies.get_readiness_service(cast(Any, FakeMinio()))
 
     result = await service.check()
 
@@ -290,6 +348,144 @@ async def test_failing_redis_and_milvus_probes_still_close_resources(
     assert milvus.closed
     assert "secret" not in result.model_dump_json()
     assert "token" not in result.model_dump_json()
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_status"),
+    [
+        (None, "healthy"),
+        (ConnectionError("postgresql://admin:secret@db/internal"), "unhealthy"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_postgresql_probe_closes_owned_session_on_success_and_error(
+    error: Exception | None,
+    expected_status: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = FakeSession(error=error)
+    factory = use_probe_session(monkeypatch, session)
+
+    async def fake_create_pool(settings: object) -> FakeRedis:
+        del settings
+        return FakeRedis()
+
+    monkeypatch.setattr(dependencies, "create_pool", fake_create_pool)
+    monkeypatch.setattr(
+        dependencies,
+        "MilvusClient",
+        healthy_milvus_client,
+    )
+    service = dependencies.get_readiness_service(cast(Any, HealthyMinio()))
+
+    result = await service.check()
+
+    assert result.services["postgresql"].status == expected_status
+    assert factory.calls == 1
+    assert session.statements == ["SELECT 1"]
+    assert session.close_count == 1
+    assert "secret" not in result.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_timed_out_postgresql_probe_closes_owned_session_after_late_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release = asyncio.Event()
+    session = FakeSession(release=release)
+    factory = use_probe_session(monkeypatch, session)
+
+    async def fake_create_pool(settings: object) -> FakeRedis:
+        del settings
+        return FakeRedis()
+
+    monkeypatch.setattr(dependencies, "create_pool", fake_create_pool)
+    monkeypatch.setattr(
+        dependencies,
+        "MilvusClient",
+        healthy_milvus_client,
+    )
+    service = dependencies.get_readiness_service(cast(Any, HealthyMinio()))
+    check_task = asyncio.create_task(service.check())
+    await asyncio.wait_for(session.execute_started.wait(), timeout=0.1)
+
+    try:
+        result = await asyncio.wait_for(check_task, timeout=1.2)
+        assert result.services["postgresql"].status == "unhealthy"
+        assert session.close_count == 0
+    finally:
+        release.set()
+
+    await asyncio.wait_for(session.closed.wait(), timeout=0.1)
+    assert factory.calls == 1
+    assert session.close_count == 1
+
+
+def test_ready_endpoint_does_not_resolve_request_scoped_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe_session = FakeSession()
+    factory = use_probe_session(monkeypatch, probe_session)
+
+    async def fail_request_session() -> AsyncIterator[object]:
+        raise AssertionError("readiness must not resolve a request-scoped database session")
+        yield object()
+
+    async def fake_create_pool(settings: object) -> FakeRedis:
+        del settings
+        return FakeRedis()
+
+    monkeypatch.setattr(dependencies, "create_pool", fake_create_pool)
+    monkeypatch.setattr(
+        dependencies,
+        "MilvusClient",
+        healthy_milvus_client,
+    )
+    application = create_app()
+    application.dependency_overrides[dependencies.get_session] = fail_request_session
+    application.dependency_overrides[dependencies.get_minio_client] = HealthyMinio
+
+    response = cast(
+        Response,
+        TestClient(application).get(  # pyright: ignore[reportUnknownMemberType]
+            "/api/v1/health/ready"
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["services"]["postgresql"]["status"] == "healthy"
+    assert factory.calls == 1
+    assert probe_session.close_count == 1
+
+
+def test_live_health_does_not_create_any_database_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_probe_session_factory() -> None:
+        raise AssertionError("liveness must not create a probe database session")
+
+    async def fail_request_session() -> AsyncIterator[object]:
+        raise AssertionError("liveness must not create a request database session")
+        yield object()
+
+    monkeypatch.setattr(
+        dependencies,
+        "async_session_factory",
+        fail_probe_session_factory,
+        raising=False,
+    )
+    application = create_app()
+    application.dependency_overrides[dependencies.get_session] = fail_request_session
+
+    response = cast(
+        Response,
+        TestClient(application).get(  # pyright: ignore[reportUnknownMemberType]
+            "/api/v1/health/live"
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
 
 
 def test_create_app_sets_up_agent_checkpoint_on_startup(
