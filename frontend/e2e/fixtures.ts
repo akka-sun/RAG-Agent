@@ -7,6 +7,7 @@ import type {
   KnowledgeBaseCreate,
   Message,
   MessageCitation,
+  ReadinessResponse,
 } from '../src/types/api'
 
 export const KB_ID = '11111111-1111-4111-8111-111111111111'
@@ -64,6 +65,18 @@ function knowledgeBase(input: Partial<KnowledgeBase> = {}): KnowledgeBase {
     created_at: FIXED_TIME,
     updated_at: FIXED_TIME,
     ...input,
+  }
+}
+
+function readiness(): ReadinessResponse {
+  return {
+    status: 'healthy',
+    services: {
+      postgresql: { status: 'healthy', latency_ms: 3, error: null },
+      redis: { status: 'healthy', latency_ms: 1, error: null },
+      minio: { status: 'healthy', latency_ms: 5, error: null },
+      milvus: { status: 'healthy', latency_ms: 8, error: null },
+    },
   }
 }
 
@@ -166,6 +179,11 @@ async function installApiRoutes(page: Page, state: MockApiState): Promise<void> 
 
     if (method === 'GET' && path === '/api/v1/health/live') {
       await json(route, { status: 'ok' })
+      return
+    }
+
+    if (method === 'GET' && path === '/api/v1/health/ready') {
+      await json(route, readiness())
       return
     }
 

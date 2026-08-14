@@ -6,15 +6,27 @@ import { useNotificationStore } from '@/stores/notifications'
 import StatusPage from './StatusPage.vue'
 import ToastHost from '@/components/common/ToastHost.vue'
 
-const healthApi = vi.hoisted(() => ({ live: vi.fn() }))
+const healthApi = vi.hoisted(() => ({ live: vi.fn(), ready: vi.fn() }))
 
 vi.mock('@/api/resources', () => ({ healthApi }))
+
+const healthyReadiness = {
+  status: 'healthy' as const,
+  services: {
+    postgresql: { status: 'healthy' as const, latency_ms: 3, error: null },
+    redis: { status: 'healthy' as const, latency_ms: 1, error: null },
+    minio: { status: 'healthy' as const, latency_ms: 5, error: null },
+    milvus: { status: 'healthy' as const, latency_ms: 8, error: null },
+  },
+}
 
 interface StatusState {
   apiStatus: string
   latency: number | null
   lastChecked: Date | null
   detail: string | null
+  readinessStatus: string
+  readinessDetail: string | null
 }
 
 function statusState(wrapper: ReturnType<typeof mount>): StatusState {
@@ -27,6 +39,8 @@ function snapshot(state: StatusState) {
     latency: state.latency,
     lastChecked: state.lastChecked,
     detail: state.detail,
+    readinessStatus: state.readinessStatus,
+    readinessDetail: state.readinessDetail,
   }
 }
 
@@ -37,11 +51,12 @@ describe('StatusPage', () => {
     pinia = createPinia()
     setActivePinia(pinia)
     vi.resetAllMocks()
+    healthApi.ready.mockResolvedValue(healthyReadiness)
   })
 
   afterEach(() => document.body.replaceChildren())
 
-  it('shows local frontend status and marks the API healthy only after an ok live response', async () => {
+  it('shows local frontend status, live API health, and every readiness dependency', async () => {
     healthApi.live.mockResolvedValue({ status: 'ok' })
     const wrapper = mount(StatusPage, { global: { plugins: [pinia] } })
 
@@ -51,11 +66,61 @@ describe('StatusPage', () => {
     expect(wrapper.text()).toContain('API 正常')
     expect(wrapper.text()).toMatch(/\d+ ms/)
     expect(wrapper.text()).toContain('最后检查')
-    expect(wrapper.text()).toContain('后端未提供检测接口')
-    expect(wrapper.text()).not.toContain('PostgreSQL 正常')
-    expect(wrapper.text()).not.toContain('Redis 正常')
-    expect(wrapper.text()).not.toContain('MinIO 正常')
-    expect(wrapper.text()).not.toContain('Milvus 正常')
+    expect(healthApi.ready).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[data-service="postgresql"]').text()).toContain('3 ms')
+    expect(wrapper.get('[data-service="redis"]').text()).toContain('1 ms')
+    expect(wrapper.get('[data-service="minio"]').text()).toContain('5 ms')
+    expect(wrapper.get('[data-service="milvus"]').text()).toContain('8 ms')
+  })
+
+  it('shows partial readiness failures with the safe backend error', async () => {
+    healthApi.ready.mockResolvedValue({
+      ...healthyReadiness,
+      status: 'degraded',
+      services: {
+        ...healthyReadiness.services,
+        redis: { status: 'unhealthy', latency_ms: 17, error: 'Redis 连接失败' },
+      },
+    })
+    const wrapper = mount(StatusPage, { global: { plugins: [pinia] } })
+
+    await flushPromises()
+
+    const redis = wrapper.get('[data-service="redis"]')
+    expect(redis.attributes('data-status')).toBe('unhealthy')
+    expect(redis.text()).toContain('17 ms')
+    expect(redis.text()).toContain('Redis 连接失败')
+    expect(wrapper.text()).not.toContain('redis://')
+  })
+
+  it('marks all dependencies unavailable when readiness cannot be checked', async () => {
+    healthApi.ready.mockRejectedValue(new ApiError(503, 'service_unavailable', 'redis://secret@internal'))
+    const wrapper = mount(StatusPage, { global: { plugins: [pinia] } })
+
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('无法检测基础设施状态')
+    expect(wrapper.text()).not.toContain('redis://secret@internal')
+    for (const service of ['postgresql', 'redis', 'minio', 'milvus']) {
+      expect(wrapper.get(`[data-service="${service}"]`).attributes('data-status')).toBe('unavailable')
+    }
+  })
+
+  it('refreshes readiness on the shared retry action', async () => {
+    healthApi.live.mockResolvedValue({ status: 'ok' })
+    healthApi.ready
+      .mockRejectedValueOnce(new ApiError(503, 'service_unavailable', 'internal failure'))
+      .mockResolvedValueOnce(healthyReadiness)
+    const wrapper = mount(StatusPage, { global: { plugins: [pinia] } })
+
+    await flushPromises()
+    expect(wrapper.get('[data-service="redis"]').attributes('data-status')).toBe('unavailable')
+
+    await wrapper.get('button').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-service="redis"]').attributes('data-status')).toBe('healthy')
+    expect(healthApi.ready).toHaveBeenCalledTimes(2)
   })
 
   it('normalizes a failed health check, sends an error notification, and retries on demand', async () => {
@@ -148,6 +213,21 @@ describe('StatusPage', () => {
 
     expect(snapshot(state)).toEqual(before)
     expect(useNotificationStore(pinia).items).toEqual([])
+  })
+
+  it('ignores a deferred readiness response after unmount', async () => {
+    let resolveReady!: (response: typeof healthyReadiness) => void
+    healthApi.live.mockResolvedValue({ status: 'ok' })
+    healthApi.ready.mockReturnValue(new Promise((resolve) => { resolveReady = resolve }))
+    const wrapper = mount(StatusPage, { global: { plugins: [pinia] } })
+    const state = statusState(wrapper)
+    const before = snapshot(state)
+
+    wrapper.unmount()
+    resolveReady(healthyReadiness)
+    await flushPromises()
+
+    expect(snapshot(state)).toEqual(before)
   })
 })
 

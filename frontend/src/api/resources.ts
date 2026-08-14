@@ -1,5 +1,5 @@
 import { apiBlob, apiJson, type ApiRequestInit, type BlobResponse } from './client'
-import type { Conversation, DocumentAccepted, DocumentRecord, HealthResponse, IngestionTask, KnowledgeBase, KnowledgeBaseCreate, Message } from '@/types/api'
+import type { Conversation, DocumentAccepted, DocumentRecord, HealthResponse, IngestionTask, KnowledgeBase, KnowledgeBaseCreate, Message, ReadinessResponse } from '@/types/api'
 
 const apiPath = (path: string) => `/api/v1${path}`
 const segment = (value: string) => encodeURIComponent(value)
@@ -37,7 +37,10 @@ export const conversationsApi = {
   messages: (conversationId: string, signal?: AbortSignal) => apiJson<Message[]>(`${conversationPath(conversationId)}/messages`, request(signal)),
 }
 
-export const healthApi = { live: (signal?: AbortSignal) => apiJson<HealthResponse>(apiPath('/health/live'), request(signal)) }
+export const healthApi = {
+  live: (signal?: AbortSignal) => apiJson<HealthResponse>(apiPath('/health/live'), request(signal)),
+  ready: (signal?: AbortSignal) => apiJson<ReadinessResponse>(apiPath('/health/ready'), request(signal)),
+}
 
 function documentsPath(knowledgeBaseId: string): string { return apiPath(`/knowledge-bases/${segment(knowledgeBaseId)}/documents`) }
 function documentPath(knowledgeBaseId: string, documentId: string): string { return `${documentsPath(knowledgeBaseId)}/${segment(documentId)}` }

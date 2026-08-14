@@ -62,6 +62,7 @@ describe('resource APIs', () => {
     await conversationsApi.get('conversation')
     await conversationsApi.messages('conversation')
     await healthApi.live()
+    await healthApi.ready()
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       '/api/v1/knowledge-bases',
@@ -71,6 +72,7 @@ describe('resource APIs', () => {
       '/api/v1/conversations/conversation',
       '/api/v1/conversations/conversation/messages',
       '/api/v1/health/live',
+      '/api/v1/health/ready',
     ])
   })
 })

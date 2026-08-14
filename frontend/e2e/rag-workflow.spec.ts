@@ -121,12 +121,16 @@ test('offers a deterministic retry after a failed message stream', async ({ page
   await expectNoPageOverflow(page)
 })
 
-test('labels unsupported infrastructure and supports refreshed chat and knowledge-base deep links', async ({ page, mockApi }) => {
+test('shows infrastructure readiness and supports refreshed chat and knowledge-base deep links', async ({ page, mockApi }) => {
   mockApi.seedCompleteWorkflow()
 
   await gotoProduction(page, '/status')
   await expect(page.getByRole('heading', { name: '系统状态' })).toBeVisible()
-  await expect(page.getByText('后端未提供检测接口', { exact: true })).toHaveCount(4)
+  for (const [service, latency] of [['postgresql', '3 ms'], ['redis', '1 ms'], ['minio', '5 ms'], ['milvus', '8 ms']]) {
+    const card = page.locator(`[data-service="${service}"]`)
+    await expect(card).toHaveAttribute('data-status', 'healthy')
+    await expect(card).toContainText(latency)
+  }
   await expectNoPageOverflow(page)
 
   const chatResponse = await page.goto('/chat')

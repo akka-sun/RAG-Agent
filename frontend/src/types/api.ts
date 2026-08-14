@@ -85,6 +85,19 @@ export interface HealthResponse {
   status: 'ok'
 }
 
+export type InfrastructureServiceName = 'postgresql' | 'redis' | 'minio' | 'milvus'
+
+export interface ServiceReadiness {
+  status: 'healthy' | 'unhealthy'
+  latency_ms: number
+  error: string | null
+}
+
+export interface ReadinessResponse {
+  status: 'healthy' | 'degraded'
+  services: Record<InfrastructureServiceName, ServiceReadiness>
+}
+
 export interface ErrorResponse {
   error: {
     code: string
