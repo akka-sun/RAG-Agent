@@ -1,11 +1,14 @@
+import asyncio
 from collections.abc import AsyncIterator
 from functools import lru_cache
-from typing import Annotated, cast
+from typing import Annotated, Protocol, cast
 from uuid import UUID
 
 from arq.connections import RedisSettings, create_pool
 from fastapi import Depends
 from minio import Minio
+from pymilvus import MilvusClient  # pyright: ignore[reportMissingTypeStubs]
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.checkpoint import create_async_checkpointer
@@ -36,6 +39,7 @@ from app.services.knowledge_base import (
     KnowledgeBaseService,
 )
 from app.services.rag import RAGService
+from app.services.readiness import ReadinessService
 from app.services.retrieval import HybridRetrievalService
 from app.services.sse_chat import (
     ConversationRepositoryProtocol as SSEConversationRepositoryProtocol,
@@ -92,20 +96,91 @@ DocumentIngestionQueueDependency = Annotated[
 ]
 
 
-def get_object_storage() -> ObjectStorage:
+def get_minio_client() -> Minio:
     settings = get_settings()
-    client = Minio(
+    return Minio(
         settings.minio_endpoint,
         access_key=settings.minio_access_key,
         secret_key=settings.minio_secret_key,
         secure=False,
     )
-    return MinioObjectStorage(client, settings.minio_bucket)
+
+
+MinioClientDependency = Annotated[
+    Minio,
+    Depends(get_minio_client),
+]
+
+
+class _RedisProbeClient(Protocol):
+    async def ping(self) -> object: ...
+
+    async def aclose(self) -> None: ...
+
+
+class _MilvusProbeClient(Protocol):
+    def has_collection(self, collection_name: str, /) -> bool: ...
+
+    def close(self) -> None: ...
+
+
+def get_object_storage(client: MinioClientDependency) -> ObjectStorage:
+    return MinioObjectStorage(client, get_settings().minio_bucket)
 
 
 ObjectStorageDependency = Annotated[
     ObjectStorage,
     Depends(get_object_storage),
+]
+
+
+def get_readiness_service(
+    session: SessionDependency,
+    minio: MinioClientDependency,
+) -> ReadinessService:
+    settings = get_settings()
+
+    async def postgresql_probe() -> None:
+        await session.execute(text("SELECT 1"))
+
+    async def redis_probe() -> None:
+        redis = cast(
+            _RedisProbeClient,
+            await create_pool(RedisSettings.from_dsn(settings.redis_url)),
+        )
+        try:
+            await redis.ping()
+        finally:
+            await redis.aclose()
+
+    async def minio_probe() -> None:
+        await asyncio.to_thread(minio.bucket_exists, settings.minio_bucket)
+
+    async def milvus_probe() -> None:
+        milvus = cast(
+            _MilvusProbeClient,
+            await asyncio.to_thread(
+                MilvusClient,
+                uri=settings.milvus_uri,
+                token=settings.milvus_token or "",
+            ),
+        )
+        try:
+            await asyncio.to_thread(milvus.has_collection, settings.milvus_collection)
+        finally:
+            await asyncio.to_thread(milvus.close)
+
+    return ReadinessService(
+        postgresql_probe=postgresql_probe,
+        redis_probe=redis_probe,
+        minio_probe=minio_probe,
+        milvus_probe=milvus_probe,
+    )
+
+
+ReadinessServiceDependency = Annotated[
+    ReadinessService,
+    Depends(get_readiness_service),
 ]
 
 

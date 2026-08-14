@@ -8,6 +8,7 @@ from fastapi import APIRouter, FastAPI, Request, Response
 from starlette.middleware.base import RequestResponseEndpoint
 
 from app.agent.checkpoint import ensure_langgraph_security_env, setup_checkpointer
+from app.api.dependencies import ReadinessServiceDependency
 from app.api.errors import register_error_handlers
 from app.api.routes.chat import router as chat_router
 from app.api.routes.conversations import router as conversations_router
@@ -19,6 +20,7 @@ from app.api.routes.knowledge_bases import (
 from app.api.routes.rag import router as rag_router
 from app.config import get_settings
 from app.observability import clear_trace_context, configure_logging, set_trace_context
+from app.schemas.health import ReadinessResponse
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +84,15 @@ def create_app() -> FastAPI:
     )
     async def live_health() -> HealthResponse:  # pyright: ignore[reportUnusedFunction]
         return {"status": "ok"}
+
+    @router.get(
+        "/health/ready",
+        tags=["绯荤粺"],
+    )
+    async def ready_health(  # pyright: ignore[reportUnusedFunction]
+        readiness: ReadinessServiceDependency,
+    ) -> ReadinessResponse:
+        return await readiness.check()
 
     router.include_router(knowledge_bases_router)
     router.include_router(conversations_router)
