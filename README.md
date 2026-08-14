@@ -1,5 +1,33 @@
 # RAG Agent
 
+## 前端
+
+前端需要 Docker Desktop（或兼容的 Docker Engine）、Docker Compose v2，以及本地开发所需的 Node.js 24 LTS 与 pnpm。首次运行可从示例配置创建本地 `.env`；不要提交真实凭据。
+
+使用 Docker Compose 构建并启动前端及其依赖：
+
+```powershell
+docker compose up -d --build frontend
+```
+
+默认通过 `http://127.0.0.1:5173` 访问前端。浏览器只请求同源 `/api/v1`，由前端 Nginx 代理到 Compose 内的 `api:8000`；SSE 响应不会被代理缓冲。刷新 `/chat` 等前端深链时，Nginx 会回退到 `index.html`。
+
+本地开发前端：
+
+```powershell
+Set-Location frontend
+pnpm install --frozen-lockfile
+pnpm dev
+```
+
+开发服务器默认把 `/api/v1` 代理到 `http://127.0.0.1:8000`，可通过 `VITE_API_PROXY_TARGET` 覆盖。完整前端检查命令：
+
+```powershell
+pnpm test:run
+pnpm typecheck
+pnpm build
+```
+
 PDF 图片处理链路见 [docs/pdf-image-processing.md](docs/pdf-image-processing.md)。
 
 RAG Agent 是一个用于学习和验证 Agentic RAG 核心链路的后端项目。当前实现以 FastAPI 提供 API，以 ARQ Worker 异步摄取文档，并使用 PostgreSQL 保存业务状态与 LangGraph checkpoint、MinIO 保存原文和结构化解析结果、Redis 承载 ARQ 队列、Milvus 保存生产级文档分块索引。模型能力通过 OpenAI-compatible API 接入；Milvus、MinerU、PaddleX 按 Docker 服务配置。
