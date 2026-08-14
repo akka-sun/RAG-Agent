@@ -244,12 +244,14 @@ describe('chat route query behavior', () => {
 
     await router.push('/?new=1')
     await vi.waitFor(() => expect(wrapper.find('input').exists()).toBe(true))
+    expect(wrapper.find('[role="status"]').exists()).toBe(false)
     resolveGet(firstConversation)
     await vi.waitFor(() => expect(api.messages).toHaveBeenCalledWith(firstConversationId))
     resolveMessages([])
     await vi.waitFor(() => expect(useConversationStore().currentId).toBeNull())
 
     expect(wrapper.find('input').exists()).toBe(true)
+    expect(wrapper.find('[role="status"]').exists()).toBe(false)
   })
 
   it('creates from the new route and replaces it with the persisted conversation query', async () => {

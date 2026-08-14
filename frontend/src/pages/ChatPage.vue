@@ -28,6 +28,7 @@ async function resolveRoute(): Promise<void> {
   pageError.value = null
   conversation.value = null
   createOpen.value = false
+  loading.value = false
 
   if (isNewFlow.value) {
     conversations.select(null)

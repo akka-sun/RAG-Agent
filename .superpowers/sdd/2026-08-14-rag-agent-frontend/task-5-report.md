@@ -84,3 +84,35 @@ Complete. All findings from `task-5-review.md` are addressed.
 ### Concerns
 
 - Verification continues to require the temporary bundled-Node PATH prefix noted above. No source or project configuration concern remains.
+
+## Fix round 2/5
+
+### Status
+
+Complete. The synchronous new, empty, and invalid route branches now clear active page loading before returning, while stale async completions remain generation-guarded.
+
+### Files changed
+
+- `frontend/src/pages/ChatPage.vue`
+- `frontend/src/stores/conversations.spec.ts`
+
+### Red / green
+
+- RED: delayed conversation → `?new=1` left `[role="status"]` visible after the create dialog opened.
+- GREEN: the regression proves the loading status is absent immediately after the route change and remains absent after the old request settles.
+
+### Commands and output
+
+- `pnpm test:run -- src/stores/conversations.spec.ts` — RED: 1 failed / 57 passed; GREEN is included in the full suite below.
+- `pnpm test:run` — pass, 7 files / 58 tests.
+- `pnpm typecheck` — pass.
+- `pnpm build` — pass.
+- `git diff --check` — pass.
+
+### Commit
+
+`fix(frontend): clear stale chat loading`
+
+### Concerns
+
+- Verification still requires the temporary bundled-Node PATH prefix. No remaining source concern is known.
