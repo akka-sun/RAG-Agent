@@ -143,3 +143,35 @@
 - Codex in-app browser 额外面板检查被宿主 AppData 权限阻断；真实 Chromium 三档 E2E 已覆盖要求的视觉结构与交互，且全部通过。
 - fixture 的 SSE body 由 route fulfillment 一次性交付，但包含完整、有序的多个 SSE event；真实前端 parser、reducer、消息持久化 refresh 路径均被执行。网络分块边界已由既有 SSE 单元测试覆盖。
 - 本任务按要求未扩展处理 Task 3/6/7/9 deferred minor；本轮 E2E 没有证明它们是 load-bearing 阻塞。
+
+## Review fix round 1（2026-08-14）
+
+本轮只处理 `task-10-review.md` 的三个 Important；review 中两个 Minor 依控制器决定继续 deferred。
+
+### 新增红灯
+
+1. Production delivery 断言：E2E 读取入口 HTML，要求 hashed `/assets/index-*.js`，并拒绝 `/@vite/client` 和 `/src/main.ts`。旧 `pnpm dev` 下 desktop 3/3 均按预期失败，输出明确包含开发客户端与源码入口。
+2. SSE lifecycle 断言：fixture 记录 stream start、terminal fulfilled、persisted visible 与 messages GET。切换 production preview 后，主成功路径红灯顺序为 `messages:get:empty → stream:1:start → stream:1:persisted-visible → stream:1:terminal-fulfilled → messages:get:visible`；retry 路径同样证明 persisted pair 早于 terminal。
+3. Same-origin 防线断言：浏览器主动请求 `http://127.0.0.1:8000/api/v1/health/live`。旧 glob 将它正常 mock，测试得到 `blocked=false` 且没有 violation，按预期红灯。
+
+### 修复
+
+- `package.json` 新增 `preview` 与 `test:e2e:server`；Playwright webServer 改为 `pnpm build && vite preview --host 127.0.0.1 --port 4173 --strictPort`。同一 9 个 E2E 现在直接运行 production bundle；独立 `pnpm build` 门禁保留。
+- 成功 SSE 先 `await route.fulfill(...)` 并记录 `terminal-fulfilled`，随后才将 authoritative user/assistant/citation pair 设为可见并记录 `persisted-visible`。失败 stream 只记录 `error-fulfilled`，不产生 persisted pair。
+- messages endpoint 每次 GET 记录 `messages:get:empty|visible`。主成功与 retry 均明确断言 `terminal-fulfilled → persisted-visible → messages:get:visible`；retry 在第一次 error 后额外断言 persisted messages 仍为空，成功后打开 citation dialog 并检查只有 persisted citation 才具备的 `sample.md` metadata，证明 reconciliation 已完成。
+- route handler 在任何契约响应前检查 `url.origin === frontendOrigin`。跨源 `/api/v1/**` 会记录完整 method/URL violation 并 `route.abort('blockedbyclient')`；未显式确认的 violation 在 fixture teardown 失败。未知同源 API 仍返回 loud 501 并在 teardown 失败。
+
+Playwright `route.fulfill` 继续一次性交付完整 SSE body，因此这组 E2E 验证 event 顺序、terminal/persistence/request ordering 与最终 reconciliation，不声称验证网络逐块 token 渲染。拆包、CRLF、多行 data 与分块边界由既有 `src/api/sse.spec.ts` 单元测试承担。
+
+### Fix 后验证
+
+- Production-hosted Playwright：9/9 passed，25.8s；webServer 日志明确为 `pnpm build`、`vite preview --host 127.0.0.1 --port 4173 --strictPort`。
+- Frontend unit：21 files、120 tests passed。
+- Typecheck：exit 0。
+- 独立 production build：119 modules transformed，exit 0。
+- `docker compose config --quiet`：exit 0。
+- `rag-agent-api-1` 与 `rag-agent-frontend-1`：均 Up (healthy)。
+- `GET http://127.0.0.1:5173/api/v1/health/live`：`{"status":"ok"}`。
+- `GET http://127.0.0.1:5173/chat`：HTTP 200，`text/html`。
+
+本轮目标独立提交：`test(frontend): harden production E2E fixtures`。

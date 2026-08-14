@@ -30,6 +30,7 @@ const citation: MessageCitation = {
 }
 
 interface MockApiState {
+  frontendOrigin: string
   knowledgeBases: KnowledgeBase[]
   documents: DocumentRecord[]
   tasks: Map<string, IngestionTask>
@@ -38,6 +39,8 @@ interface MockApiState {
   messagesByConversation: Map<string, Message[]>
   failNextStreams: number
   streamAttempts: number
+  lifecycle: string[]
+  originViolations: string[]
   unknownRequests: string[]
 }
 
@@ -45,6 +48,7 @@ export interface MockApi {
   state: MockApiState
   seedCompleteWorkflow(): void
   failNextStream(count?: number): void
+  acknowledgeOriginViolations(): void
 }
 
 type Fixtures = { mockApi: MockApi }
@@ -151,6 +155,11 @@ async function installApiRoutes(page: Page, state: MockApiState): Promise<void> 
     const request = route.request()
     const method = request.method()
     const url = new URL(request.url())
+    if (url.origin !== state.frontendOrigin) {
+      state.originViolations.push(`${method} ${url.href}`)
+      await route.abort('blockedbyclient')
+      return
+    }
     const path = decodeURIComponent(url.pathname)
     const segments = path.split('/').filter(Boolean)
 
@@ -274,7 +283,9 @@ async function installApiRoutes(page: Page, state: MockApiState): Promise<void> 
     }
 
     if (segments.length === 5 && segments[2] === 'conversations' && segments[4] === 'messages' && method === 'GET') {
-      await json(route, state.messagesByConversation.get(segments[3]) ?? [])
+      const persisted = state.messagesByConversation.get(segments[3]) ?? []
+      state.lifecycle.push(`messages:get:${persisted.length ? 'visible' : 'empty'}`)
+      await json(route, persisted)
       return
     }
 
@@ -282,6 +293,8 @@ async function installApiRoutes(page: Page, state: MockApiState): Promise<void> 
       const conversationId = segments[3]
       const input = request.postDataJSON() as { content: string }
       state.streamAttempts += 1
+      const attempt = state.streamAttempts
+      state.lifecycle.push(`stream:${attempt}:start`)
       if (state.failNextStreams > 0) {
         state.failNextStreams -= 1
         await route.fulfill({
@@ -294,10 +307,10 @@ async function installApiRoutes(page: Page, state: MockApiState): Promise<void> 
             sseEvent('error', { message: '模拟流式失败' }),
           ].join(''),
         })
+        state.lifecycle.push(`stream:${attempt}:error-fulfilled`)
         return
       }
 
-      state.messagesByConversation.set(conversationId, messages(input.content))
       await route.fulfill({
         status: 200,
         contentType: 'text/event-stream; charset=utf-8',
@@ -315,6 +328,9 @@ async function installApiRoutes(page: Page, state: MockApiState): Promise<void> 
           sseEvent('message_end', { content: ANSWER }),
         ].join(''),
       })
+      state.lifecycle.push(`stream:${attempt}:terminal-fulfilled`)
+      state.messagesByConversation.set(conversationId, messages(input.content))
+      state.lifecycle.push(`stream:${attempt}:persisted-visible`)
       return
     }
 
@@ -324,8 +340,9 @@ async function installApiRoutes(page: Page, state: MockApiState): Promise<void> 
 }
 
 export const test = base.extend<Fixtures>({
-  mockApi: async ({ page }, use) => {
+  mockApi: async ({ page, baseURL }, use) => {
     const state: MockApiState = {
+      frontendOrigin: new URL(baseURL ?? 'http://127.0.0.1:4173').origin,
       knowledgeBases: [],
       documents: [],
       tasks: new Map(),
@@ -334,6 +351,8 @@ export const test = base.extend<Fixtures>({
       messagesByConversation: new Map(),
       failNextStreams: 0,
       streamAttempts: 0,
+      lifecycle: [],
+      originViolations: [],
       unknownRequests: [],
     }
     const api: MockApi = {
@@ -347,9 +366,13 @@ export const test = base.extend<Fixtures>({
       failNextStream(count = 1) {
         state.failNextStreams = count
       },
+      acknowledgeOriginViolations() {
+        state.originViolations = []
+      },
     }
     await installApiRoutes(page, state)
     await use(api)
+    expect(state.originViolations, `检测到跨源 API 请求：${state.originViolations.join(', ')}`).toEqual([])
     expect(state.unknownRequests, `fixture 未处理 API 请求：${state.unknownRequests.join(', ')}`).toEqual([])
   },
 })

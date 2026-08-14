@@ -30,7 +30,7 @@ pnpm test:e2e:install  # 首次运行仅需安装 Chromium
 pnpm test:e2e
 ```
 
-Playwright E2E 使用同源 `/api/v1` 契约 fixture，不调用真实模型服务；默认覆盖 1440×900、768×900 和 390×844 三种 Chromium 视口。失败时的截图与 trace 写入已忽略的 `frontend/test-results/`，HTML 报告写入已忽略的 `frontend/playwright-report/`。
+Playwright E2E 会先生成 production bundle，再在隔离的 `127.0.0.1:4173` Vite preview 上运行；测试使用同源 `/api/v1` 契约 fixture，不调用真实模型服务。默认覆盖 1440×900、768×900 和 390×844 三种 Chromium 视口。失败时的截图与 trace 写入已忽略的 `frontend/test-results/`，HTML 报告写入已忽略的 `frontend/playwright-report/`。
 
 PDF 图片处理链路见 [docs/pdf-image-processing.md](docs/pdf-image-processing.md)。
 

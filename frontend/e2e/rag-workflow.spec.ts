@@ -1,5 +1,23 @@
 import { ANSWER, CHUNK_ID, CONVERSATION_ID, DOCUMENT_ID, KB_ID, expect, test } from './fixtures'
 
+async function gotoProduction(page: import('@playwright/test').Page, path: string): Promise<void> {
+  const response = await page.goto(path)
+  expect(response?.status()).toBe(200)
+  const html = await response!.text()
+  expect(html).toMatch(/<script[^>]+src="\/assets\/index-[^"]+\.js"/)
+  expect(html).not.toContain('/@vite/client')
+  expect(html).not.toContain('/src/main.ts')
+}
+
+function expectOrdered(lifecycle: string[], expected: string[]): void {
+  let cursor = -1
+  for (const event of expected) {
+    const index = lifecycle.indexOf(event, cursor + 1)
+    expect(index, `${event} 应晚于 ${cursor >= 0 ? lifecycle[cursor] : '测试开始'}；实际顺序：${lifecycle.join(' → ')}`).toBeGreaterThan(cursor)
+    cursor = index
+  }
+}
+
 async function expectNoPageOverflow(page: import('@playwright/test').Page): Promise<void> {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
   expect(overflow).toBeLessThanOrEqual(1)
@@ -23,7 +41,7 @@ async function inspectConversationRail(page: import('@playwright/test').Page): P
 }
 
 test('completes the RAG workflow from an empty knowledge base to a persisted cited answer', async ({ page, mockApi }) => {
-  await page.goto('/knowledge-bases')
+  await gotoProduction(page, '/knowledge-bases')
   await expect(page.getByRole('heading', { name: '知识库', exact: true })).toBeVisible()
   await expect(page.getByText('还没有知识库')).toBeVisible()
 
@@ -57,6 +75,12 @@ test('completes the RAG workflow from an empty knowledge base to a persisted cit
   await page.getByRole('button', { name: '发送', exact: true }).click()
   await expect(page.getByRole('log', { name: '消息记录' })).toContainText(ANSWER)
   expect(mockApi.state.messagesByConversation.get(CONVERSATION_ID)).toHaveLength(2)
+  expectOrdered(mockApi.state.lifecycle, [
+    'stream:1:start',
+    'stream:1:terminal-fulfilled',
+    'stream:1:persisted-visible',
+    'messages:get:visible',
+  ])
 
   await page.getByRole('button', { name: '查看引用 S1' }).click()
   const citationDialog = page.getByRole('dialog', { name: '引用来源' })
@@ -71,23 +95,35 @@ test('offers a deterministic retry after a failed message stream', async ({ page
   mockApi.seedCompleteWorkflow()
   mockApi.failNextStream()
 
-  await page.goto(`/?conversation=${CONVERSATION_ID}`)
+  await gotoProduction(page, `/?conversation=${CONVERSATION_ID}`)
   await expect(page.getByRole('heading', { name: '保修政策咨询' })).toBeVisible()
   await page.getByLabel('输入消息').fill('产品保修多久？')
   await page.getByRole('button', { name: '发送', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('生成失败：模拟流式失败')
+  expect(mockApi.state.messagesByConversation.get(CONVERSATION_ID)).toHaveLength(0)
+  expect(mockApi.state.lifecycle).not.toContain('stream:1:persisted-visible')
 
   await page.getByRole('button', { name: '重试上一条消息' }).click()
   await expect(page.getByRole('log', { name: '消息记录' })).toContainText(ANSWER)
   expect(mockApi.state.streamAttempts).toBe(2)
   expect(mockApi.state.messagesByConversation.get(CONVERSATION_ID)).toHaveLength(2)
+  expectOrdered(mockApi.state.lifecycle, [
+    'stream:1:start',
+    'stream:1:error-fulfilled',
+    'stream:2:start',
+    'stream:2:terminal-fulfilled',
+    'stream:2:persisted-visible',
+    'messages:get:visible',
+  ])
+  await page.getByRole('button', { name: '查看引用 S1' }).click()
+  await expect(page.getByRole('dialog', { name: '引用来源' })).toContainText('sample.md')
   await expectNoPageOverflow(page)
 })
 
 test('labels unsupported infrastructure and supports refreshed chat and knowledge-base deep links', async ({ page, mockApi }) => {
   mockApi.seedCompleteWorkflow()
 
-  await page.goto('/status')
+  await gotoProduction(page, '/status')
   await expect(page.getByRole('heading', { name: '系统状态' })).toBeVisible()
   await expect(page.getByText('后端未提供检测接口', { exact: true })).toHaveCount(4)
   await expectNoPageOverflow(page)
@@ -104,4 +140,17 @@ test('labels unsupported infrastructure and supports refreshed chat and knowledg
   await page.reload()
   await expect(page.getByRole('heading', { name: '文档', exact: true })).toBeVisible()
   await expectNoPageOverflow(page)
+
+  const crossOriginApi = 'http://127.0.0.1:8000/api/v1/health/live'
+  const blocked = await page.evaluate(async (url) => {
+    try {
+      await fetch(url)
+      return false
+    } catch {
+      return true
+    }
+  }, crossOriginApi)
+  expect(blocked).toBe(true)
+  expect(mockApi.state.originViolations).toEqual([`GET ${crossOriginApi}`])
+  mockApi.acknowledgeOriginViolations()
 })
