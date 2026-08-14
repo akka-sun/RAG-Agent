@@ -19,8 +19,8 @@ function submit(): void {
     error.value = '会话标题不能为空'
     return
   }
-  if (trimmed.length > 100) {
-    error.value = '会话标题不能超过 100 个字符'
+  if (trimmed.length > 200) {
+    error.value = '会话标题不能超过 200 个字符'
     return
   }
   error.value = null
@@ -39,7 +39,7 @@ function close(): void {
       <form @submit.prevent="submit">
         <label>
           会话标题
-          <input v-model="title" :disabled="busy" maxlength="101" autocomplete="off">
+          <input v-model="title" :disabled="busy" maxlength="200" autocomplete="off">
         </label>
         <p v-if="error" role="alert">{{ error }}</p>
         <div class="conversation-create-dialog__actions">

@@ -10,7 +10,7 @@ function messageFor(error: unknown): string {
 function validTitle(title: string): string {
   const trimmed = title.trim()
   if (!trimmed) throw new Error('会话标题不能为空')
-  if (trimmed.length > 100) throw new Error('会话标题不能超过 100 个字符')
+  if (trimmed.length > 200) throw new Error('会话标题不能超过 200 个字符')
   return trimmed
 }
 
@@ -64,16 +64,19 @@ export const useConversationStore = defineStore('conversations', () => {
     currentId.value = id
   }
 
-  async function loadMessages(conversationId: string): Promise<void> {
+  async function loadMessages(conversationId: string, isCurrent: () => boolean = () => true): Promise<void> {
     loading.value = true
     error.value = null
     try {
-      messagesByConversation.value[conversationId] = sortMessages(await conversationsApi.messages(conversationId) ?? [])
+      const messages = await conversationsApi.messages(conversationId) ?? []
+      if (!isCurrent()) return
+      messagesByConversation.value[conversationId] = sortMessages(messages)
     } catch (reason) {
+      if (!isCurrent()) return
       error.value = messageFor(reason)
       throw reason
     } finally {
-      loading.value = false
+      if (isCurrent()) loading.value = false
     }
   }
 

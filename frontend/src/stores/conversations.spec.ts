@@ -6,6 +6,7 @@ import ConversationCreateDialog from '@/components/conversations/ConversationCre
 import ConversationList from '@/components/conversations/ConversationList.vue'
 import ChatPage from '@/pages/ChatPage.vue'
 import { useConversationStore } from './conversations'
+import { useKnowledgeBaseStore } from './knowledge-bases'
 
 const api = vi.hoisted(() => ({
   list: vi.fn(),
@@ -20,6 +21,11 @@ const knowledgeBasesApi = vi.hoisted(() => ({ list: vi.fn() }))
 vi.mock('@/api/resources', () => ({ conversationsApi: api, knowledgeBasesApi }))
 
 const firstConversationId = '11111111-1111-4111-8111-111111111111'
+const secondConversationId = '22222222-2222-4222-8222-222222222222'
+const knowledgeBase = {
+  id: 'knowledge-base-1', name: '产品知识库', description: '', embedding_model: 'bge-m3', embedding_dimension: 1024,
+  created_at: '2026-08-14T00:00:00Z', updated_at: '2026-08-14T00:00:00Z',
+}
 
 const firstConversation = {
   id: firstConversationId,
@@ -30,7 +36,7 @@ const firstConversation = {
 }
 
 const secondConversation = {
-  id: 'conversation-2',
+  id: secondConversationId,
   knowledge_base_id: 'knowledge-base-2',
   title: '技术讨论',
   created_at: '2026-08-14T01:00:00Z',
@@ -98,19 +104,28 @@ describe('conversation store', () => {
 })
 
 describe('conversation create dialog', () => {
-  it('rejects blank and overlong titles, then emits a trimmed valid title', async () => {
+  it('rejects blank and titles over 200 characters, then emits a trimmed 200-character title', async () => {
     const wrapper = mount(ConversationCreateDialog, { props: { open: true } })
 
     await wrapper.get('form').trigger('submit')
     expect(wrapper.text()).toContain('会话标题不能为空')
 
-    await wrapper.get('input').setValue('x'.repeat(101))
+    await wrapper.get('input').setValue('x'.repeat(200))
     await wrapper.get('form').trigger('submit')
-    expect(wrapper.text()).toContain('会话标题不能超过 100 个字符')
+    expect(wrapper.emitted('create')?.[0]).toEqual(['x'.repeat(200)])
 
-    await wrapper.get('input').setValue('  方案讨论  ')
+    await wrapper.get('input').setValue('x'.repeat(201))
     await wrapper.get('form').trigger('submit')
-    expect(wrapper.emitted('create')?.[0]).toEqual(['方案讨论'])
+    expect(wrapper.text()).toContain('会话标题不能超过 200 个字符')
+  })
+
+  it('allows the store to create a 200-character title', async () => {
+    setActivePinia(createPinia())
+    api.create.mockResolvedValue(firstConversation)
+
+    await useConversationStore().create('knowledge-base-1', 'x'.repeat(200))
+
+    expect(api.create).toHaveBeenCalledWith('knowledge-base-1', { title: 'x'.repeat(200) })
   })
 
   it('closes without creating when cancelled', async () => {
@@ -181,5 +196,77 @@ describe('chat route query behavior', () => {
     await vi.waitFor(() => expect(wrapper.text()).toContain('会话不存在或已失效'))
 
     expect(api.get).not.toHaveBeenCalled()
+  })
+
+  it('keeps the newest conversation selected when an older route request finishes last', async () => {
+    setActivePinia(createPinia())
+    knowledgeBasesApi.list.mockResolvedValue([])
+    let resolveFirstGet!: (value: typeof firstConversation) => void
+    let resolveFirstMessages!: (value: []) => void
+    let resolveSecondMessages!: (value: []) => void
+    const firstGet = new Promise<typeof firstConversation>((resolve) => { resolveFirstGet = resolve })
+    const firstMessages = new Promise<[]>((resolve) => { resolveFirstMessages = resolve })
+    const secondMessages = new Promise<[]>((resolve) => { resolveSecondMessages = resolve })
+    api.get.mockImplementation((id: string) => id === firstConversationId ? firstGet : Promise.resolve(secondConversation))
+    api.messages.mockImplementation((id: string) => id === firstConversationId ? firstMessages : secondMessages)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: ChatPage }] })
+    await router.push(`/?conversation=${firstConversationId}`)
+    await router.isReady()
+    const wrapper = mount(ChatPage, { global: { plugins: [router] } })
+    await vi.waitFor(() => expect(api.get).toHaveBeenCalledWith(firstConversationId))
+
+    await router.push(`/?conversation=${secondConversationId}`)
+    await vi.waitFor(() => expect(api.get).toHaveBeenCalledWith(secondConversationId))
+    resolveSecondMessages([])
+    await vi.waitFor(() => expect(wrapper.text()).toContain('技术讨论'))
+    resolveFirstGet(firstConversation)
+    await vi.waitFor(() => expect(api.messages).toHaveBeenCalledWith(firstConversationId))
+    resolveFirstMessages([])
+    await vi.waitFor(() => expect(useConversationStore().currentId).toBe(secondConversationId))
+
+    expect(wrapper.text()).toContain('技术讨论')
+  })
+
+  it('keeps the new-conversation flow open when an older conversation request finishes', async () => {
+    setActivePinia(createPinia())
+    knowledgeBasesApi.list.mockResolvedValue([knowledgeBase])
+    let resolveGet!: (value: typeof firstConversation) => void
+    let resolveMessages!: (value: []) => void
+    const delayedGet = new Promise<typeof firstConversation>((resolve) => { resolveGet = resolve })
+    const delayedMessages = new Promise<[]>((resolve) => { resolveMessages = resolve })
+    api.get.mockResolvedValue(delayedGet)
+    api.messages.mockResolvedValue(delayedMessages)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: ChatPage }] })
+    await router.push(`/?conversation=${firstConversationId}`)
+    await router.isReady()
+    const wrapper = mount(ChatPage, { global: { plugins: [router] } })
+    await vi.waitFor(() => expect(api.get).toHaveBeenCalledWith(firstConversationId))
+
+    await router.push('/?new=1')
+    await vi.waitFor(() => expect(wrapper.find('input').exists()).toBe(true))
+    resolveGet(firstConversation)
+    await vi.waitFor(() => expect(api.messages).toHaveBeenCalledWith(firstConversationId))
+    resolveMessages([])
+    await vi.waitFor(() => expect(useConversationStore().currentId).toBeNull())
+
+    expect(wrapper.find('input').exists()).toBe(true)
+  })
+
+  it('creates from the new route and replaces it with the persisted conversation query', async () => {
+    setActivePinia(createPinia())
+    const knowledgeBases = useKnowledgeBaseStore()
+    knowledgeBases.items = [knowledgeBase]
+    knowledgeBases.select(knowledgeBase.id)
+    api.create.mockResolvedValue(firstConversation)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: ChatPage }] })
+    const replace = vi.spyOn(router, 'replace')
+    await router.push('/?new=1')
+    await router.isReady()
+    const wrapper = mount(ChatPage, { global: { plugins: [router] } })
+    await vi.waitFor(() => expect(wrapper.find('input').exists()).toBe(true))
+
+    await wrapper.get('input').setValue('新会话')
+    await wrapper.get('form').trigger('submit')
+    await vi.waitFor(() => expect(replace).toHaveBeenCalledWith({ name: 'chat', query: { conversation: firstConversationId } }))
   })
 })

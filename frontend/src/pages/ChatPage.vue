@@ -20,13 +20,17 @@ const conversation = ref<{ id: string, title: string } | null>(null)
 const requestedConversationId = computed(() => typeof route.query.conversation === 'string' ? route.query.conversation : null)
 const isNewFlow = computed(() => route.query.new === '1')
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+let routeGeneration = 0
 
 async function resolveRoute(): Promise<void> {
+  const generation = ++routeGeneration
+  const isCurrent = () => generation === routeGeneration
   pageError.value = null
   conversation.value = null
   createOpen.value = false
 
   if (isNewFlow.value) {
+    conversations.select(null)
     if (!knowledgeBases.selectedId) {
       pageError.value = '请先选择一个知识库，再创建会话。'
       return
@@ -37,10 +41,12 @@ async function resolveRoute(): Promise<void> {
 
   const conversationId = requestedConversationId.value
   if (!conversationId) {
+    conversations.select(null)
     pageError.value = '请选择已有会话，或创建一个新会话。'
     return
   }
   if (!uuidPattern.test(conversationId)) {
+    conversations.select(null)
     pageError.value = '会话不存在或已失效，请返回会话列表重试。'
     return
   }
@@ -48,16 +54,19 @@ async function resolveRoute(): Promise<void> {
   loading.value = true
   try {
     const item = await conversationsApi.get(conversationId)
+    if (!isCurrent()) return
     if (!item) throw new Error('会话不存在')
     knowledgeBases.select(item.knowledge_base_id)
     conversations.select(item.id)
-    await conversations.loadMessages(item.id)
+    await conversations.loadMessages(item.id, isCurrent)
+    if (!isCurrent()) return
     conversation.value = item
   } catch {
+    if (!isCurrent()) return
     conversations.select(null)
     pageError.value = '会话不存在或已失效，请返回会话列表重试。'
   } finally {
-    loading.value = false
+    if (isCurrent()) loading.value = false
   }
 }
 
