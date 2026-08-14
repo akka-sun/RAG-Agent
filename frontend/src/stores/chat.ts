@@ -166,6 +166,7 @@ export const useChatStore = defineStore('chat', () => {
     retrievalDetails,
     optimisticUser,
     lastSubmittedContent,
+    lastConversationId,
     send,
     cancel,
     retry,
