@@ -55,7 +55,7 @@ describe('resource APIs', () => {
 
     await knowledgeBasesApi.list()
     await knowledgeBasesApi.create({
-      name: 'Docs', description: '', embedding_model: 'model', embedding_dimension: 1024,
+      name: 'Docs', description: '',
     })
     await conversationsApi.list('kb')
     await conversationsApi.create('kb', { title: 'New chat' })

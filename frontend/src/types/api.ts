@@ -13,8 +13,6 @@ export interface KnowledgeBase {
 export interface KnowledgeBaseCreate {
   name: string
   description: string
-  embedding_model: string
-  embedding_dimension: number
 }
 
 export interface DocumentRecord {

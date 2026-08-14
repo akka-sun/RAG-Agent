@@ -45,10 +45,11 @@ test('completes the RAG workflow from an empty knowledge base to a persisted cit
   await expect(page.getByRole('heading', { name: '知识库', exact: true })).toBeVisible()
   await expect(page.getByText('还没有知识库')).toBeVisible()
 
+  await expect(page.getByLabel('嵌入模型')).toHaveCount(0)
+  await expect(page.getByLabel('向量维度')).toHaveCount(0)
   await page.getByLabel('知识库名称').fill('产品资料库')
-  await page.getByLabel('嵌入模型').fill('text-embedding-3-small')
-  await page.getByLabel('向量维度').fill('1536')
   await page.getByRole('button', { name: '创建知识库' }).click()
+  expect(mockApi.state.knowledgeBaseCreatePayloads).toEqual([{ name: '产品资料库', description: '' }])
   await expect(page).toHaveURL(new RegExp(`/knowledge-bases/${KB_ID}$`))
 
   await page.getByLabel('选择文档').setInputFiles({

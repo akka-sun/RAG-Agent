@@ -32,6 +32,7 @@ const citation: MessageCitation = {
 interface MockApiState {
   frontendOrigin: string
   knowledgeBases: KnowledgeBase[]
+  knowledgeBaseCreatePayloads: KnowledgeBaseCreate[]
   documents: DocumentRecord[]
   tasks: Map<string, IngestionTask>
   taskPollCounts: Map<string, number>
@@ -175,6 +176,7 @@ async function installApiRoutes(page: Page, state: MockApiState): Promise<void> 
 
     if (path === '/api/v1/knowledge-bases' && method === 'POST') {
       const input = request.postDataJSON() as KnowledgeBaseCreate
+      state.knowledgeBaseCreatePayloads.push(input)
       const item = knowledgeBase(input)
       state.knowledgeBases.push(item)
       await json(route, item, 201)
@@ -344,6 +346,7 @@ export const test = base.extend<Fixtures>({
     const state: MockApiState = {
       frontendOrigin: new URL(baseURL ?? 'http://127.0.0.1:4173').origin,
       knowledgeBases: [],
+      knowledgeBaseCreatePayloads: [],
       documents: [],
       tasks: new Map(),
       taskPollCounts: new Map(),

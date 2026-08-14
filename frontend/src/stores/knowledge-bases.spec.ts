@@ -98,7 +98,7 @@ describe('knowledge-base store', () => {
     const store = useKnowledgeBaseStore()
 
     await store.create({
-      name: '技术规范', description: '', embedding_model: 'bge-m3', embedding_dimension: 1024,
+      name: '技术规范', description: '',
     })
 
     expect(store.items).toEqual([knowledgeBases[1]])
@@ -119,15 +119,26 @@ describe('knowledge-base store', () => {
 })
 
 describe('knowledge-base form', () => {
-  it('requires nonblank name and model plus a positive integer dimension', async () => {
+  it('requires a nonblank name', async () => {
     const wrapper = mount(KnowledgeBaseForm)
 
     await wrapper.get('form').trigger('submit')
 
     expect(wrapper.text()).toContain('知识库名称不能为空')
-    expect(wrapper.text()).toContain('嵌入模型不能为空')
-    expect(wrapper.text()).toContain('维度必须是正整数')
     expect(wrapper.emitted('submit')).toBeUndefined()
+  })
+
+  it('submits only name and description without embedding settings', async () => {
+    const wrapper = mount(KnowledgeBaseForm)
+
+    expect(wrapper.find('#knowledge-base-model').exists()).toBe(false)
+    expect(wrapper.find('#knowledge-base-dimension').exists()).toBe(false)
+
+    await wrapper.get('#knowledge-base-name').setValue('  Product docs ')
+    await wrapper.get('#knowledge-base-description').setValue('Team references')
+    await wrapper.get('form').trigger('submit')
+
+    expect(wrapper.emitted('submit')).toEqual([[{ name: 'Product docs', description: 'Team references' }]])
   })
 })
 

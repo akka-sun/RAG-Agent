@@ -10,22 +10,15 @@ const emit = defineEmits<{
 const form = reactive({
   name: '',
   description: '',
-  embeddingModel: '',
-  embeddingDimension: '',
 })
 
 const errors = reactive({
   name: '',
-  embeddingModel: '',
-  embeddingDimension: '',
 })
 
 function validate(): boolean {
   errors.name = form.name.trim() ? '' : '知识库名称不能为空'
-  errors.embeddingModel = form.embeddingModel.trim() ? '' : '嵌入模型不能为空'
-  const dimension = Number(form.embeddingDimension)
-  errors.embeddingDimension = Number.isInteger(dimension) && dimension > 0 ? '' : '维度必须是正整数'
-  return !errors.name && !errors.embeddingModel && !errors.embeddingDimension
+  return !errors.name
 }
 
 function submit(): void {
@@ -34,8 +27,6 @@ function submit(): void {
   emit('submit', {
     name: form.name.trim(),
     description: form.description,
-    embedding_model: form.embeddingModel.trim(),
-    embedding_dimension: Number(form.embeddingDimension),
   })
 }
 </script>
@@ -48,14 +39,6 @@ function submit(): void {
 
     <label for="knowledge-base-description">描述（可选）</label>
     <textarea id="knowledge-base-description" v-model="form.description" rows="3" />
-
-    <label for="knowledge-base-model">嵌入模型</label>
-    <input id="knowledge-base-model" v-model="form.embeddingModel" type="text" maxlength="200" required>
-    <p v-if="errors.embeddingModel" class="field-error">{{ errors.embeddingModel }}</p>
-
-    <label for="knowledge-base-dimension">向量维度</label>
-    <input id="knowledge-base-dimension" v-model="form.embeddingDimension" type="number" min="1" step="1" required>
-    <p v-if="errors.embeddingDimension" class="field-error">{{ errors.embeddingDimension }}</p>
 
     <div class="knowledge-base-form__actions">
       <button type="button" class="button button--secondary" @click="emit('cancel')">取消</button>
