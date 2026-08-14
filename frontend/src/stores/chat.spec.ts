@@ -270,6 +270,43 @@ describe('chat store', () => {
     expect(store.draftAssistant).toBe('')
   })
 
+  it('releases message syncing after generation invalidation so a new conversation can reload', async () => {
+    let resolveStaleRefresh!: (messages: typeof persistedMessages) => void
+    const staleRefresh = new Promise<typeof persistedMessages>((resolve) => { resolveStaleRefresh = resolve })
+    const secondPersistedMessages = [
+      { ...persistedMessages[0], id: 'u2', conversation_id: secondConversationId },
+      { ...persistedMessages[1], id: 'a2', conversation_id: secondConversationId },
+    ]
+    conversationsApi.messages
+      .mockReturnValueOnce(staleRefresh)
+      .mockRejectedValueOnce(new Error('second refresh failed'))
+      .mockResolvedValueOnce(secondPersistedMessages)
+    streamMock
+      .mockReturnValueOnce(events(
+        { event: 'message_start', data: { conversation_id: conversationId } },
+        { event: 'message_end', data: { content: 'stale answer' } },
+      ))
+      .mockReturnValueOnce(events(
+        { event: 'message_start', data: { conversation_id: secondConversationId } },
+        { event: 'message_end', data: { content: 'second answer' } },
+      ))
+    const store = useChatStore()
+
+    const staleSend = store.send(conversationId, 'stale question')
+    await vi.waitFor(() => expect(store.syncingMessages).toBe(true))
+    store.cancel()
+    resolveStaleRefresh(persistedMessages)
+    await staleSend
+
+    expect(store.syncingMessages).toBe(false)
+
+    await store.send(secondConversationId, 'second question')
+    expect(store.syncError).toBe('second refresh failed')
+    expect(store.syncingMessages).toBe(false)
+    await store.reloadPersistedMessages(secondConversationId)
+    expect(store.syncError).toBeNull()
+  })
+
   it('rejects retry before a failed or cancelled message and while a stream is active', async () => {
     const controlled = new ControlledEvents()
     streamMock.mockReturnValue(controlled)

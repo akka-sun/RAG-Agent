@@ -36,6 +36,7 @@ export const useChatStore = defineStore('chat', () => {
   const controller = shallowRef<AbortController | null>(null)
   const busy = computed(() => controller.value !== null)
   let generation = 0
+  let syncGeneration = 0
   let retryable = false
 
   async function send(conversationId: string, content: string): Promise<void> {
@@ -150,6 +151,7 @@ export const useChatStore = defineStore('chat', () => {
     isCurrent: () => boolean = () => true,
   ): Promise<boolean> {
     if (conversationId !== lastConversationId.value || phase.value !== 'completed') return false
+    const activeSyncGeneration = ++syncGeneration
     syncingMessages.value = true
     try {
       await conversationStore.loadMessages(conversationId, isCurrent)
@@ -163,7 +165,7 @@ export const useChatStore = defineStore('chat', () => {
       syncError.value = errorMessage(reason)
       return false
     } finally {
-      if (isCurrent()) syncingMessages.value = false
+      if (activeSyncGeneration === syncGeneration) syncingMessages.value = false
     }
   }
 
