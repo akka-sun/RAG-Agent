@@ -44,12 +44,17 @@ const activeStream = computed(() => currentChatState.value && chat.busy)
 const canRetry = computed(() => currentChatState.value && (chat.phase === 'failed' || chat.phase === 'cancelled'))
 const draftForConversation = computed(() => conversation.value && chat.lastConversationId === conversation.value.id ? chat.draftAssistant : '')
 const citationsForConversation = computed(() => conversation.value && chat.lastConversationId === conversation.value.id ? chat.citations : [])
+const baselineForConversation = computed(() => conversation.value && chat.lastConversationId === conversation.value.id
+  ? chat.submissionBaselineMessageIds
+  : [])
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 let routeGeneration = 0
 
 async function resolveRoute(): Promise<void> {
   const generation = ++routeGeneration
   const isCurrent = () => generation === routeGeneration
+  const targetConversationId = isNewFlow.value ? null : requestedConversationId.value
+  if (chat.busy && chat.lastConversationId !== targetConversationId) chat.cancel()
   pageError.value = null
   conversation.value = null
   createOpen.value = false
@@ -87,6 +92,7 @@ async function resolveRoute(): Promise<void> {
     await conversations.loadForKnowledgeBase(item.knowledge_base_id)
     await conversations.loadMessages(item.id, isCurrent)
     if (!isCurrent()) return
+    chat.reconcilePersisted(item.id)
     conversation.value = item
   } catch {
     if (!isCurrent()) return
@@ -210,6 +216,7 @@ watch(() => route.query, resolveRoute)
           :draft-assistant="draftForConversation"
           :draft-citations="citationsForConversation"
           :phase="visiblePhase"
+          :submission-baseline-message-ids="baselineForConversation"
           @citation="activeCitation = $event"
         />
         <div class="chat-page__composer">

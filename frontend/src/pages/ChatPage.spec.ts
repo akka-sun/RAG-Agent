@@ -20,12 +20,25 @@ vi.mock('@/api/sse', async (importOriginal) => ({
 vi.mock('@/api/resources', () => ({ conversationsApi, knowledgeBasesApi }))
 
 class ControlledEvents implements AsyncIterable<SseEvent>, AsyncIterator<SseEvent> {
+  private queued: IteratorResult<SseEvent>[] = []
   private waiting?: (value: IteratorResult<SseEvent>) => void
   [Symbol.asyncIterator](): AsyncIterator<SseEvent> { return this }
   next(): Promise<IteratorResult<SseEvent>> {
+    const queued = this.queued.shift()
+    if (queued) return Promise.resolve(queued)
     return new Promise((resolve) => { this.waiting = resolve })
   }
-  end(): void { this.waiting?.({ value: undefined, done: true }) }
+  push(event: SseEvent): void { this.deliver({ value: event, done: false }) }
+  end(): void { this.deliver({ value: undefined, done: true }) }
+  private deliver(value: IteratorResult<SseEvent>): void {
+    if (this.waiting) {
+      const resolve = this.waiting
+      this.waiting = undefined
+      resolve(value)
+    } else {
+      this.queued.push(value)
+    }
+  }
 }
 
 function events(...items: SseEvent[]): AsyncIterable<SseEvent> {
@@ -160,11 +173,17 @@ describe('ChatPage', () => {
     await vi.waitFor(() => expect(wrapper.get('textarea').attributes('disabled')).toBeUndefined())
   })
 
-  it('deduplicates persisted messages after a failed refresh followed by route reload', async () => {
+  it('reconciles only after route reload returns a new-ID user/assistant pair beyond the submission baseline', async () => {
+    const newPersistedMessages = [
+      ...persistedMessages,
+      { ...persistedMessages[0], id: 'u2', created_at: '2026-08-14T00:00:02Z' },
+      { ...persistedMessages[1], id: 'a2', created_at: '2026-08-14T00:00:03Z' },
+    ]
     conversationsApi.messages
-      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(persistedMessages)
       .mockRejectedValueOnce(new Error('refresh failed'))
       .mockResolvedValueOnce(persistedMessages)
+      .mockResolvedValueOnce(newPersistedMessages)
     streamMock.mockReturnValue(events(
       { event: 'message_start', data: { conversation_id: conversation.id } },
       { event: 'message_end', data: { content: '使用容器。' } },
@@ -173,13 +192,66 @@ describe('ChatPage', () => {
     await wrapper.get('textarea').setValue('如何部署？')
     await wrapper.get('textarea').trigger('keydown', { key: 'Enter' })
     await vi.waitFor(() => expect(useChatStore().error).toBe('refresh failed'))
+    expect(wrapper.findAll('[aria-label="你的消息"]')).toHaveLength(2)
+    expect(wrapper.findAll('[aria-label="助手消息"]')).toHaveLength(2)
 
     await router.push({ name: 'chat' })
     await router.push({ name: 'chat', query: { conversation: conversation.id } })
     await vi.waitFor(() => expect(wrapper.text()).toContain('部署讨论'))
-    await vi.waitFor(() => expect(wrapper.findAll('[aria-label="你的消息"]')).toHaveLength(1))
+    await vi.waitFor(() => expect(conversationsApi.messages).toHaveBeenCalledTimes(3))
+    expect(useChatStore().optimisticUser).not.toBeNull()
+    expect(useChatStore().draftAssistant).toBe('使用容器。')
+    expect(wrapper.findAll('[aria-label="你的消息"]')).toHaveLength(2)
+    expect(wrapper.findAll('[aria-label="助手消息"]')).toHaveLength(2)
 
-    expect(wrapper.findAll('[aria-label="助手消息"]')).toHaveLength(1)
+    await router.push({ name: 'chat' })
+    await router.push({ name: 'chat', query: { conversation: conversation.id } })
+    await vi.waitFor(() => expect(conversationsApi.messages).toHaveBeenCalledTimes(4))
+    expect(useChatStore().optimisticUser).toBeNull()
+    expect(useChatStore().draftAssistant).toBe('')
+    expect(wrapper.findAll('[aria-label="你的消息"]')).toHaveLength(2)
+    expect(wrapper.findAll('[aria-label="助手消息"]')).toHaveLength(2)
+  })
+
+  it('cancels active A during direct route resolution to B so B can send and stale A cannot pollute it', async () => {
+    const activeA = new ControlledEvents()
+    const persistedB = [
+      { ...persistedMessages[0], id: 'bu1', conversation_id: secondConversation.id, content: 'question B' },
+      { ...persistedMessages[1], id: 'ba1', conversation_id: secondConversation.id, content: 'B answer' },
+    ]
+    let bMessageLoads = 0
+    conversationsApi.messages.mockImplementation((id: string) => {
+      if (id !== secondConversation.id) return Promise.resolve([])
+      bMessageLoads += 1
+      return Promise.resolve(bMessageLoads === 1 ? [] : persistedB)
+    })
+    streamMock.mockReturnValueOnce(activeA).mockReturnValueOnce(events(
+      { event: 'message_start', data: { conversation_id: secondConversation.id } },
+      { event: 'message_end', data: { content: 'B answer' } },
+    ))
+    conversationsApi.get.mockImplementation((id: string) => Promise.resolve(id === secondConversation.id ? secondConversation : conversation))
+    const { wrapper, router } = await mountPage()
+    await wrapper.get('textarea').setValue('question A')
+    await wrapper.get('textarea').trigger('keydown', { key: 'Enter' })
+    await vi.waitFor(() => expect(streamMock).toHaveBeenCalledTimes(1))
+
+    await router.push({ name: 'chat', query: { conversation: secondConversation.id } })
+    await vi.waitFor(() => expect(wrapper.text()).toContain('技术讨论'))
+    const firstSignal = streamMock.mock.calls[0][2].signal as AbortSignal
+    expect(firstSignal.aborted).toBe(true)
+
+    await wrapper.get('textarea').setValue('question B')
+    await wrapper.get('textarea').trigger('keydown', { key: 'Enter' })
+    await vi.waitFor(() => expect(streamMock).toHaveBeenCalledTimes(2))
+    expect(streamMock.mock.calls[1][0]).toBe(secondConversation.id)
+
+    activeA.push({ event: 'token', data: { text: 'stale A' } })
+    activeA.push({ event: 'message_end', data: { content: 'stale A answer' } })
+    activeA.end()
+    await vi.waitFor(() => expect(useChatStore().lastConversationId).toBe(secondConversation.id))
+    await vi.waitFor(() => expect(wrapper.text()).toContain('B answer'))
+    expect(wrapper.text()).not.toContain('stale A')
+    expect(useChatStore().draftAssistant).toBe('')
   })
 
   it('closes the conversation rail before opening the new-chat title dialog', async () => {

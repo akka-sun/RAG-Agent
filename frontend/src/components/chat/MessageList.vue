@@ -5,14 +5,15 @@ import type { ChatPhase, OptimisticUserMessage } from '@/stores/chat'
 import type { Message, MessageCitation } from '@/types/api'
 import MessageBubble, { type DisplayMessage } from './MessageBubble.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   conversationId: string
   messages: Message[]
   optimisticUser: OptimisticUserMessage | null
   draftAssistant: string
   draftCitations: CitationData[]
   phase: ChatPhase
-}>()
+  submissionBaselineMessageIds?: string[]
+}>(), { submissionBaselineMessageIds: () => [] })
 defineEmits<{ citation: [citation: MessageCitation | CitationData] }>()
 
 const scrollContainer = ref<HTMLElement | null>(null)
@@ -23,18 +24,27 @@ const displayedMessages = computed<DisplayMessage[]>(() => {
   const optimistic = props.optimisticUser?.conversationId === props.conversationId
     ? props.optimisticUser
     : null
-  const persistedOptimistic = optimistic && props.phase === 'completed'
-    && props.messages.some((message) => message.role === 'user' && message.content === optimistic.content)
+  const baseline = new Set(props.submissionBaselineMessageIds)
+  let authoritativeUserSeen = false
+  let authoritativePairSeen = false
+  if (props.phase === 'completed') {
+    for (const message of props.messages) {
+      if (baseline.has(message.id)) continue
+      if (!authoritativeUserSeen && message.role === 'user') {
+        authoritativeUserSeen = true
+      } else if (authoritativeUserSeen && message.role === 'assistant') {
+        authoritativePairSeen = true
+        break
+      }
+    }
+  }
 
-  if (optimistic && !persistedOptimistic) {
+  if (optimistic && !authoritativePairSeen) {
     result.push({ id: 'optimistic-user', role: 'user', content: optimistic.content, citations: [] })
   }
 
   if (props.draftAssistant) {
-    const lastPersistedAssistant = [...props.messages].reverse().find((message) => message.role === 'assistant')
-    const refreshedDraft = props.phase === 'completed'
-      && lastPersistedAssistant?.content === props.draftAssistant
-    if (!refreshedDraft) {
+    if (!authoritativePairSeen) {
       result.push({
         id: 'draft-assistant',
         role: 'assistant',

@@ -30,6 +30,7 @@ export const useChatStore = defineStore('chat', () => {
   const optimisticUser = ref<OptimisticUserMessage | null>(null)
   const lastSubmittedContent = ref<string | null>(null)
   const lastConversationId = ref<string | null>(null)
+  const submissionBaselineMessageIds = ref<string[]>([])
   const controller = shallowRef<AbortController | null>(null)
   const busy = computed(() => controller.value !== null)
   let generation = 0
@@ -41,6 +42,8 @@ export const useChatStore = defineStore('chat', () => {
     if (!normalized) throw new Error('消息不能为空')
     lastConversationId.value = conversationId
     lastSubmittedContent.value = normalized
+    submissionBaselineMessageIds.value = (conversationStore.messagesByConversation[conversationId] ?? [])
+      .map((message) => message.id)
     optimisticUser.value = { conversationId, content: normalized }
     retryable = false
     await run(conversationId, normalized)
@@ -115,6 +118,29 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  function reconcilePersisted(conversationId: string): boolean {
+    if (conversationId !== lastConversationId.value || phase.value !== 'completed') return false
+    const baseline = new Set(submissionBaselineMessageIds.value)
+    const currentMessages = conversationStore.messagesByConversation[conversationId] ?? []
+    let authoritativeUserSeen = false
+    let authoritativePairSeen = false
+    for (const message of currentMessages) {
+      if (baseline.has(message.id)) continue
+      if (!authoritativeUserSeen && message.role === 'user') {
+        authoritativeUserSeen = true
+      } else if (authoritativeUserSeen && message.role === 'assistant') {
+        authoritativePairSeen = true
+        break
+      }
+    }
+    if (!authoritativePairSeen) return false
+    optimisticUser.value = null
+    draftAssistant.value = ''
+    citations.value = []
+    error.value = null
+    return true
+  }
+
   async function reduce(event: SseEvent, conversationId: string, isCurrent: () => boolean): Promise<boolean> {
     switch (event.event) {
       case 'message_start':
@@ -155,7 +181,7 @@ export const useChatStore = defineStore('chat', () => {
         retryable = false
         try {
           await conversationStore.loadMessages(conversationId, isCurrent)
-          if (isCurrent()) optimisticUser.value = null
+          if (isCurrent()) reconcilePersisted(conversationId)
         } catch (reason) {
           if (isCurrent()) error.value = errorMessage(reason)
         }
@@ -174,7 +200,9 @@ export const useChatStore = defineStore('chat', () => {
     optimisticUser,
     lastSubmittedContent,
     lastConversationId,
+    submissionBaselineMessageIds,
     busy,
+    reconcilePersisted,
     send,
     cancel,
     retry,

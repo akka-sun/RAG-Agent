@@ -79,7 +79,7 @@ describe('chat store', () => {
       { event: 'message_end', data: { content: 'retried' } },
     ))
     await expect(store.retry(conversationId)).resolves.toBeUndefined()
-    expect(store.draftAssistant).toBe('retried')
+    expect(store.draftAssistant).toBe('')
   })
 
   it('fails on clean EOF before a terminal event while preserving partial output for explicit retry', async () => {
@@ -98,7 +98,7 @@ describe('chat store', () => {
     expect(store.error).toBe('连接提前结束，请重试。')
     expect(store.draftAssistant).toBe('partial')
     await expect(store.retry(conversationId)).resolves.toBeUndefined()
-    expect(store.draftAssistant).toBe('recovered')
+    expect(store.draftAssistant).toBe('')
   })
 
   it('rejects blank input and overlapping sends while keeping one optimistic user message outside persisted messages', async () => {
@@ -153,7 +153,7 @@ describe('chat store', () => {
     await pending
 
     expect(store.phase).toBe('completed')
-    expect(store.draftAssistant).toBe('final answer')
+    expect(store.draftAssistant).toBe('')
     expect(store.optimisticUser).toBeNull()
     expect(conversationsApi.messages).toHaveBeenCalledWith(conversationId)
     expect(conversations.messagesByConversation[conversationId]).toEqual(persistedMessages)
@@ -178,7 +178,7 @@ describe('chat store', () => {
     await store.retry(conversationId)
     expect(streamMock).toHaveBeenNthCalledWith(2, conversationId, 'question', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(store.phase).toBe('completed')
-    expect(store.draftAssistant).toBe('recovered')
+    expect(store.draftAssistant).toBe('')
   })
 
   it('cancels without retrying, preserves received content, and allows only a later explicit retry', async () => {
@@ -203,7 +203,7 @@ describe('chat store', () => {
     controlled.end()
     await pending
     expect(store.phase).toBe('completed')
-    expect(store.draftAssistant).toBe('retried')
+    expect(store.draftAssistant).toBe('')
   })
 
   it('prevents stale generations from changing state or refreshing the wrong conversation', async () => {
@@ -222,7 +222,8 @@ describe('chat store', () => {
     stale.end()
     await oldPending
 
-    expect(store.draftAssistant).toBe('new answer')
+    expect(store.draftAssistant).toBe('')
+    expect(store.lastConversationId).toBe(secondConversationId)
     expect(conversationsApi.messages).toHaveBeenCalledWith(secondConversationId)
     expect(conversationsApi.messages).not.toHaveBeenCalledWith(conversationId)
   })

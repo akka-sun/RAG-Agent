@@ -16,7 +16,7 @@ const persisted: Message[] = [
 ]
 
 describe('MessageList', () => {
-  it('does not duplicate optimistic and draft messages after persisted completion refresh', () => {
+  it('does not treat an older identical Q/A pair as authoritative for the current turn', async () => {
     const wrapper = mount(MessageList, {
       props: {
         conversationId,
@@ -25,11 +25,22 @@ describe('MessageList', () => {
         draftAssistant: '使用容器部署。',
         draftCitations: [],
         phase: 'completed',
+        submissionBaselineMessageIds: persisted.map((message) => message.id),
       },
     })
 
-    expect(wrapper.findAll('[aria-label="你的消息"]')).toHaveLength(1)
-    expect(wrapper.findAll('[aria-label="助手消息"]')).toHaveLength(1)
+    expect(wrapper.findAll('[aria-label="你的消息"]')).toHaveLength(2)
+    expect(wrapper.findAll('[aria-label="助手消息"]')).toHaveLength(2)
+
+    await wrapper.setProps({
+      messages: [
+        ...persisted,
+        { ...persisted[0], id: 'user-2', created_at: '2026-08-14T00:00:02Z' },
+        { ...persisted[1], id: 'assistant-2', created_at: '2026-08-14T00:00:03Z' },
+      ],
+    })
+    expect(wrapper.findAll('[aria-label="你的消息"]')).toHaveLength(2)
+    expect(wrapper.findAll('[aria-label="助手消息"]')).toHaveLength(2)
   })
 
   it('keeps the current optimistic user and partial assistant visible while streaming', () => {
