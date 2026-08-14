@@ -22,7 +22,7 @@ const apiLabel = computed(() => ({
 }[apiStatus.value]))
 
 function errorDetail(error: unknown): string {
-  if (error instanceof ApiError) return error.message || `HTTP ${error.status}`
+  if (error instanceof ApiError) return `API 请求失败（HTTP ${error.status}），请稍后重试`
   return '无法连接到 API，请检查网络后重试'
 }
 
