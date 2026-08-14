@@ -127,8 +127,6 @@ async def test_async_ingestion_is_idempotent_and_delete_cleans_all_stores() -> N
             json={
                 "name": f"e2e-async-ingestion-{time.time_ns()}",
                 "description": "Task 11 real Compose acceptance",
-                "embedding_model": "hashing",
-                "embedding_dimension": 256,
             },
         )
         assert kb_response.status_code == 201, kb_response.text

@@ -41,8 +41,6 @@ async def create_knowledge_base(client: AsyncClient) -> str:
         json={
             "name": f"SSE KB {uuid.uuid4()}",
             "description": "",
-            "embedding_model": "hashing-64",
-            "embedding_dimension": 64,
         },
     )
 
