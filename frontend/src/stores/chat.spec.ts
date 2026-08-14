@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type { SseEvent } from '@/api/sse'
 import { useChatStore } from './chat'
@@ -59,6 +59,48 @@ describe('chat store', () => {
     conversationsApi.messages.mockResolvedValue(persistedMessages)
   })
 
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('fails a current stream when a successful SSE response has a null body and allows explicit retry', async () => {
+    const actualSse = await vi.importActual<typeof import('@/api/sse')>('@/api/sse')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 200 })))
+    streamMock.mockImplementation(actualSse.streamConversationMessage)
+    const store = useChatStore()
+
+    await store.send(conversationId, 'question')
+
+    expect(store.phase).toBe('failed')
+    expect(store.error).toBe('连接提前结束，请重试。')
+    expect(store.draftAssistant).toBe('')
+    streamMock.mockReturnValueOnce(events(
+      { event: 'message_start', data: { conversation_id: conversationId } },
+      { event: 'message_end', data: { content: 'retried' } },
+    ))
+    await expect(store.retry()).resolves.toBeUndefined()
+    expect(store.draftAssistant).toBe('retried')
+  })
+
+  it('fails on clean EOF before a terminal event while preserving partial output for explicit retry', async () => {
+    streamMock.mockReturnValueOnce(events(
+      { event: 'message_start', data: { conversation_id: conversationId } },
+      { event: 'token', data: { text: 'partial' } },
+    )).mockReturnValueOnce(events(
+      { event: 'message_start', data: { conversation_id: conversationId } },
+      { event: 'message_end', data: { content: 'recovered' } },
+    ))
+    const store = useChatStore()
+
+    await store.send(conversationId, 'question')
+
+    expect(store.phase).toBe('failed')
+    expect(store.error).toBe('连接提前结束，请重试。')
+    expect(store.draftAssistant).toBe('partial')
+    await expect(store.retry()).resolves.toBeUndefined()
+    expect(store.draftAssistant).toBe('recovered')
+  })
+
   it('rejects blank input and overlapping sends while keeping one optimistic user message outside persisted messages', async () => {
     const controlled = new ControlledEvents()
     streamMock.mockReturnValue(controlled)
@@ -78,6 +120,7 @@ describe('chat store', () => {
     store.cancel()
     controlled.end()
     await pending
+    expect(store.phase).toBe('cancelled')
   })
 
   it('reduces every event, reconstructs token spacing, deduplicates citations, and refreshes authoritative messages', async () => {
@@ -157,9 +200,9 @@ describe('chat store', () => {
     expect(streamMock).toHaveBeenCalledTimes(1)
     await store.retry()
     expect(streamMock).toHaveBeenCalledTimes(2)
-    controlled.push({ event: 'message_end', data: { content: 'stale' } })
     controlled.end()
     await pending
+    expect(store.phase).toBe('completed')
     expect(store.draftAssistant).toBe('retried')
   })
 

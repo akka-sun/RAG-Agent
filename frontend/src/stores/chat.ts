@@ -80,11 +80,20 @@ export const useChatStore = defineStore('chat', () => {
     retrievalDetails.value = null
 
     const isCurrent = () => generation === activeGeneration
+    let terminalEventReceived = false
     try {
       for await (const event of streamConversationMessage(conversationId, content, { signal: activeController.signal })) {
         if (!isCurrent()) break
         const stop = await reduce(event, conversationId, isCurrent)
-        if (stop) break
+        if (stop) {
+          terminalEventReceived = true
+          break
+        }
+      }
+      if (isCurrent() && !terminalEventReceived) {
+        phase.value = 'failed'
+        error.value = '连接提前结束，请重试。'
+        retryable = true
       }
     } catch (reason) {
       if (!isCurrent()) return

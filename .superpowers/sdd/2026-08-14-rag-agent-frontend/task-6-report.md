@@ -136,3 +136,76 @@ The resulting hash is recorded in the task handoff because embedding a commit's 
 
 - No known product-code concerns.
 - Local environment note: `node` is absent from PATH, so verification used the bundled Node executable directly; this does not affect the project output.
+
+## Fix round 1: premature clean EOF
+
+### Scope and root cause
+
+Addressed only the Important open finding from `task-6-review.md`. The store previously handled thrown transport failures and explicit terminal events, but did not check whether a current async iterable exhausted naturally without `message_end` or `error`. That path cleared the controller while leaving `phase` nonterminal and retry disabled.
+
+The deferred Minor finding about explicit reader cancellation/release was intentionally not changed in this fix round.
+
+### RED
+
+Command:
+
+```powershell
+& 'C:\Users\DELL\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe' 'node_modules\vitest\vitest.mjs' run 'src/stores/chat.spec.ts'
+```
+
+Observed before the fix:
+
+```text
+Test Files  1 failed (1)
+Tests       2 failed | 7 passed (9)
+null-body case: expected 'failed', received 'sending'
+partial clean-EOF case: expected 'failed', received 'streaming'
+Exit code: 1
+```
+
+### GREEN
+
+The store now tracks whether its current generation observed a terminal event. Natural exhaustion without one transitions only the current generation to `failed`, reports `连接提前结束，请重试。`, preserves the draft, and enables explicit retry. Cancelled and stale generations remain protected by the existing generation guard.
+
+Focused command after the fix:
+
+```text
+Test Files  1 passed (1)
+Tests       9 passed (9)
+Exit code: 0
+```
+
+Regression coverage includes a real 2xx `Response` with a null body, `message_start` plus partial token followed by clean EOF, successful explicit retry for both, cancelled clean EOF, and a stale older generation.
+
+### Fresh full verification
+
+Full tests:
+
+```text
+Test Files  9 passed (9)
+Tests       73 passed (73)
+Exit code: 0
+```
+
+Typecheck:
+
+```text
+vue-tsc --noEmit -p tsconfig.json
+Exit code: 0
+No diagnostics.
+```
+
+Production build:
+
+```text
+vite v7.3.6
+92 modules transformed.
+✓ built in 1.90s
+Exit code: 0
+```
+
+### Fix commit
+
+Planned message: `fix(frontend): fail premature chat stream EOF`
+
+The resulting hash is recorded in the task handoff.
