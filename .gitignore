@@ -1,4 +1,6 @@
 .worktrees/
+frontend/node_modules/
+frontend/dist/
 .env
 .venv/
 __pycache__/
