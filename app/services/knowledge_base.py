@@ -35,15 +35,24 @@ class KnowledgeBaseService:
         self,
         repository: KnowledgeBaseRepositoryProtocol,
         session: AsyncSession,
+        embedding_model: str,
+        embedding_dimension: int,
     ) -> None:
         self._repository = repository
         self._session = session
+        self._embedding_model = embedding_model
+        self._embedding_dimension = embedding_dimension
 
     async def create(
         self,
         data: KnowledgeBaseCreate,
     ) -> KnowledgeBase:
-        item = KnowledgeBase(**data.model_dump())
+        item = KnowledgeBase(
+            name=data.name,
+            description=data.description,
+            embedding_model=self._embedding_model,
+            embedding_dimension=self._embedding_dimension,
+        )
 
         try:
             await self._repository.add(item)

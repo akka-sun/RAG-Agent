@@ -2,6 +2,7 @@ import uuid
 from unittest.mock import AsyncMock
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge_base import KnowledgeBase
@@ -31,27 +32,50 @@ class FakeRepository:
 
 
 @pytest.mark.asyncio
-async def test_service_create_and_commit() -> None:
+async def test_service_create_persists_configured_embedding_values() -> None:
     session = AsyncMock(spec=AsyncSession)
-    service = KnowledgeBaseService(FakeRepository(), session)
+    service = KnowledgeBaseService(
+        FakeRepository(),
+        session,
+        embedding_model="Qwen/Qwen3-Embedding-8B",
+        embedding_dimension=4096,
+    )
 
     item = await service.create(
-        KnowledgeBaseCreate(
-            name="产品文档",
-            description="",
-            embedding_model="text-embedding-3-small",
-            embedding_dimension=1536,
+        KnowledgeBaseCreate.model_validate(
+            {
+                "name": "产品文档",
+                "description": "",
+            }
         )
     )
 
     assert item.name == "产品文档"
+    assert item.embedding_model == "Qwen/Qwen3-Embedding-8B"
+    assert item.embedding_dimension == 4096
     session.commit.assert_awaited_once()
+
+
+def test_create_schema_rejects_client_embedding_configuration() -> None:
+    with pytest.raises(ValidationError):
+        KnowledgeBaseCreate.model_validate(
+            {
+                "name": "越权配置",
+                "embedding_model": "other",
+                "embedding_dimension": 12,
+            }
+        )
 
 
 @pytest.mark.asyncio
 async def test_service_get_missing_raises_not_found() -> None:
     session = AsyncMock(spec=AsyncSession)
-    service = KnowledgeBaseService(FakeRepository(), session)
+    service = KnowledgeBaseService(
+        FakeRepository(),
+        session,
+        embedding_model="Qwen/Qwen3-Embedding-8B",
+        embedding_dimension=4096,
+    )
 
     with pytest.raises(KnowledgeBaseNotFoundError):
         await service.get(uuid.uuid4())
@@ -61,7 +85,12 @@ async def test_service_get_missing_raises_not_found() -> None:
 async def test_service_list_and_delete() -> None:
     session = AsyncMock(spec=AsyncSession)
     repository = FakeRepository()
-    service = KnowledgeBaseService(repository, session)
+    service = KnowledgeBaseService(
+        repository,
+        session,
+        embedding_model="Qwen/Qwen3-Embedding-8B",
+        embedding_dimension=4096,
+    )
 
     item = KnowledgeBase(
         name="产品文档",

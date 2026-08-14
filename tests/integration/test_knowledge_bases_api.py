@@ -11,8 +11,6 @@ async def test_knowledge_base_crud(
         json={
             "name": "产品文档",
             "description": "产品知识",
-            "embedding_model": "text-embedding-3-small",
-            "embedding_dimension": 1536,
         },
     )
 
@@ -42,8 +40,6 @@ async def test_duplicate_name_returns_conflict(
     payload = {
         "name": "重复名称",
         "description": "",
-        "embedding_model": "text-embedding-3-small",
-        "embedding_dimension": 1536,
     }
 
     first_response = await client.post(
@@ -62,7 +58,7 @@ async def test_duplicate_name_returns_conflict(
 
 
 @pytest.mark.integration
-async def test_invalid_dimension_returns_unified_validation_error(
+async def test_client_embedding_configuration_returns_unified_validation_error(
     client: AsyncClient,
 ) -> None:
     response = await client.post(
@@ -70,8 +66,8 @@ async def test_invalid_dimension_returns_unified_validation_error(
         json={
             "name": "无效维度",
             "description": "",
-            "embedding_model": "text-embedding-3-small",
-            "embedding_dimension": 0,
+            "embedding_model": "other",
+            "embedding_dimension": 12,
         },
     )
 

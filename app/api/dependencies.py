@@ -148,10 +148,13 @@ DocumentServiceDependency = Annotated[
 def get_knowledge_base_service(
     session: SessionDependency,
 ) -> KnowledgeBaseService:
+    settings = get_settings()
     repository = KnowledgeBaseRepository(session)
     return KnowledgeBaseService(
         repository,
         session,
+        embedding_model=settings.embedding_model,
+        embedding_dimension=settings.embedding_dimension,
     )
 
 
